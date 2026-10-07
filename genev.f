@@ -21,6 +21,41 @@ c Comments:
 c It's running only on HP-UX and  SUN platforms
 c On LINUX RAN intrinsic function is not defined
 c++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+c   pgm modifie pour ecrire 2 fichiers bos (7.3.2003)
+c   les photons ne sont ecrits que si e>0.01
+c   acceptance individuelle calculee que pour e,p,pi+,pi-    
+c   sous la ligne 99, modif possible pour le nombre d'evts Ok ou evts generes.
+c+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ 
+c  Values of target parameters (ie Ttarg, Twi, Twf, Ztarg, Zw) set for e1-6 target. 
+c  (after "CROSS-SECTION (e,e',gamma_virt)").
+c
+c  Track from generated channel number now kept. Info put in MCTK bank-entry 11. 
+c  (see after "Writing BOS file" : iw(imctk+11)=JCH)
+c   
+c  Subroutine GPhiLH to calculate the angle between hadronic and leptonic planes added.
+c  Call to GPhiLH to get gphi added (after "Filling PLAB1"). 
+c  For that purpose, add declarations : REAL Plab_Eout(3), Plab_Pout(3), res, gphi
+c
+c  Rho decay : 
+c  - Call to READ_W_DEC_RHO subroutine commented (after "Reading rho decay distribution").
+c  - Subroutine RHO_DECAY modified to calculate rho decay angular distributions from Schilling formula.
+c    As a consequence, new arguments GPhi and EPS(epsilon) have been introduced (needed in the formula). 
+c    New arguments Q2 and W have also been introduced to be used in the future 
+c    in case the user want to vary spin density matrix elements as a function of these two variables.
+c
+c  Omega decay :
+c  - Subroutine ROTATION added (private communication from Marco Battaglieri).
+c  - Subroutine OMEGA_DECAY added 
+c  -> idem as RHO_DECAY subroutine + theta_qp and p variables fixed according to Stevenson paper 
+c                           (private communication from Marco Battaglieri).
+c  - If JCH=19 : call to OMEGA_DECAY added 
+c    + rotation of the 3 pions to come back in the lab frame.
+c   (after "Omega decay using angular distribution function").
+c  - Note that to get realistic omega decay (not flat !) you have to set FLAG_Decay_RHO variable 
+c    in genev.inp file to 1 !!! 
+c
+c  Ludyvine Morand (March 2003)
+c+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
 
 c+ Decomment this line to run on INFNGE
@@ -33,7 +68,7 @@ c****************************************
 	IMPLICIT NONE
 	INCLUDE 'bcs.inc'
 	REAL RRAN
-	REAL CURRENT,ACC_P,ACC_PIP,ACC_PIM,ACC_EL
+	REAL CURRENT,ACC_P,ACC_PIP,ACC_PIM,ACC_EL,acc_had,acc_pro
 	INTEGER SE_P,SE_PIP,SE_PIM,SE_EL,SPACODE
         REAL IMP,IMPQ,THP,PHP
         REAL BETD(4),RHO_CM(5),Q2MIN,Q2MAX
@@ -43,10 +78,12 @@ c****************************************
         REAL BETM
 	INTEGER MAXPAGES, NPARZ, NTOT,jj
 	REAL MP,ME
-	REAL TETMIN,TETMAX,OMEGAMIN,OMEGAMAX,EO,DUMMY,DEGRAD
+	REAL TETMIN,TETMAX,OMEGAMIN,OMEGAMAX,EO,EO_BEAM,DUMMY,DEGRAD
 	REAL RADDEG,F_O_MIN,F_O_MAX,WMIN,WMAX,FIEMIN,FIEMAX
 	REAL PIGR,COSMIN,COSMAX,TETE,OMEGA
-	REAL EE,PE,Q2,PSI,ARG,W,EPS,GAMMA_V,D_SIGMA,D_S,R_D_S,FE
+	REAL EE,PE,Q2,PSI,ARG,W,EPS,GAMMA_V,D_SIGMA,D_SIGMA_PART
+        REAL E_TOTAL,X_TOTAL,Y_TOTAL,Z_TOTAL,CC
+	REAL D_S,R_D_S,FE
 	REAL PHI,UGV,VGV,WGV,UE1,VE1,WE1,UE2,VE2,WE2,UY,VY,WY,YYMOD
 	REAL UX,VX,WX,BET,GAMMA,Y,XXMOD,TETA,U,FI,V
 	REAL RMASS,PROD_SCAL
@@ -63,8 +100,11 @@ c****************************************
 	REAL XSECT(14,50,0:18)
 	CHARACTER*12 PARTIC(10)
 	CHARACTER*12 TARGET
-	CHARACTER*12  FILELUND,FILEBOS
-	CHARACTER*8 NCODE(54)
+c	CHARACTER*12  FILELUND,FILEBOS
+	CHARACTER*12  FILELUND
+        CHARACTER*12 FILEBOS
+	CHARACTER*16 FILEBOS_acc
+	CHARACTER*8 NCODE(54),file
 	REAL W_DEC_RHO(21,41)
 	REAL rho_cm_r(3)
 	REAL ptr(5),beta_c,gamma_c
@@ -75,11 +115,11 @@ c****************************************
 	real voltot,vol(4),wwmax,wwmin,qqmin,qqmax,smax,comin,comax,omin,omax
 	real s_max(4),a,proba(0:4),f_allchn,sig
 	INTEGER NW,IBID,M0,M8,M1,J2,MEVT,RUN,IHEAD,NR,IMCEV,IMCVX,IMCTK,
-     %          ISTATUS1,NBANK
+     %          ISTATUS1,NBANK,IBID_acc
 	INTEGER J_J,K_K,ID_BOS
 	REAL CHARGE,P_REST(5)
 	INTEGER I_CM,flag_decay_rho
-	CHARACTER*8 NCODE1(69)		
+	CHARACTER*8 NCODE1(73)		
 	REAL ENUP(100)
 	INTEGER J_P,J_PP,J_PM,J_PZ
 	REAL SECTOR,px_spool,py_spool
@@ -87,6 +127,17 @@ c****************************************
 	
 	REAL TGRAD,TGLGT,TGOFFZ
 	REAL vert_r,vert_phi,vert_x,vert_y,vert_z
+
+        REAL eo_vtx,ee_vtx,w_vtx,q2_vtx,omega_vtx,tete_vtx,fe_vtx
+        REAL eo_ini,ee_ini,w_ini,q2_ini,omega_ini,tete_ini,fe_ini
+        REAL e_radgam, theta_radgam, phi_radgam
+        REAL mf_min, mfin, Ttarg,Twi,Twf,Ztarg,Zw, delta
+
+        REAL*8   SIGMA_EP_EET
+        EXTERNAL SIGMA_EP_EET
+        INTEGER*4 ModaRad,num_soft,num_hardini,num_hardfin
+
+        REAL Plab_Eout(3), Plab_Pout(3), res, gphi
 
 C--------------------------------------
 	PARAMETER ( MAXPAGES=1000, NPARZ=10000, NTOT=100000 )
@@ -103,7 +154,7 @@ C--------------------------------------
 	COMMON/RHO/W_DEC_RHO
  	COMMON/RANDOM/IZ
         common/somma/allchn
-	common/costanti/Eo,Mp,me,pigr,degrad,raddeg
+	common/costanti/Eo_beam,Mp,me,pigr,degrad,raddeg
 	COMMON/LUND/RHO_CM,DNUP,UE1,VE1,WE1,PE,EE,JCH,
      @              PART_ID
 
@@ -136,7 +187,8 @@ C    6-TH PARTICLE SDR=LAB
      +	             'PX6 ', 'PY6' , 'PZ6' , 'E6' , 'P6',
      +               'TH6',  'PH6',
 C    Q2, OMEGA AND CHANNEL ID
-     +		     'Q2'  , 'OMEGA', 'CHAN', 'W1P', 'W2P' /
+     +		     'Q2'  , 'OMEGA', 'CHAN', 'W1P', 'W2P' 
+     +               /
 
 	DATA NCODE1 /
 C Electron in LAB
@@ -173,13 +225,16 @@ C First k1
 C First k2
      +	             'e_k2', 'p_k2' , 'th_k2' , 'phi_k2',
 C Q2, omega and channel Id 
-     +		     'Q2'  , 'omega', 'chan', 'W_1part', 'W_2part' /
+     +		     'Q2'  , 'omega', 'chan', 'W_1part', 'W_2part', 
+C Radiation Gamma in LAB
+     +	             'e_g', 'p_g' , 'th_g' , 'phi_g' 
+     + /
 
 C--------------------------------------
 
 	PIGR=ACOS(-1.)
-	MP=0.93821
-	ME=5.11E-04
+	MP=0.93827231
+	ME=0.51099906E-3
 	N_TOT = 0
 	DEGRAD=PIGR/180
 	RADDEG=1/DEGRAD
@@ -194,12 +249,13 @@ c	GOTO 911
 
         NW     = 11            ! number of colums in event bank
         IBID   = 12            ! BOS output device number
+        IBID_acc  = 13
         M0     = 0             ! number of header bank
         M8     = 8             ! number of colums in header bank
         M1     = 1             ! number of rows in header bank
         J2     = 1             ! number of rows in event bank
         MEVT   = 1             ! event number        
-        RUN    = 0
+        RUN    = 0             ! run number for GSIM 
         
         CALL BOS(IW,Nbcs)
         CALL BKFMT("HEAD","I")
@@ -215,7 +271,7 @@ c	GOTO 911
 C--
 c-
 c+ Reading rho decay distribution
-	CALL READ_W_DEC_RHO
+c	CALL READ_W_DEC_RHO 
 c-
 
 c+ Filling total xsection vector 
@@ -223,10 +279,15 @@ c+ Filling total xsection vector
 c-
 c+ Reading input parameters from external file (from current dir!)
 c
-	OPEN(UNIT=2,FILE='genev.inp',FORM='FORMATTED')
-	READ(2,*) FILEBOS	 	! BOS file name
+	OPEN(UNIT=2,FILE='genev.inp',STATUS='OLD',FORM='FORMATTED')
+c	READ(2,*) FILEBOS	 	! BOS file name
+	READ(2,*) FILE	 	! BOS file name
+	filebos(1:8)=file                                        ! modif dd 02.03
+	filebos(9:12)='.bos'
+	filebos_acc(1:8)=file
+	filebos_acc(9:16)='_acc.bos'
 	READ(2,*) NSTORY		! # EVENTI
-	READ(2,*) EO			! EO (GEV)
+	READ(2,*) EO_BEAM		! EO (GEV)
 	READ(2,*) F_O_MIN		! OMEGA MINIMO COME FRAZIONE DI EO 
 	READ(2,*) F_O_MAX		! OMEGA MAX COME FRAZIONE DI EO
 	READ(2,*) TETMIN		! TETA_MIN ELETTRONE (DEG)
@@ -251,11 +312,11 @@ c
 	READ(2,*) TGRAD                 ! Target radius
 	READ(2,*) TGLGT                 ! Target length
 	READ(2,*) TGOFFZ                ! Target offset in z
-c	READ(2,*) IZ			! RANDOM NUMBER
+	READ(2,*) MODARAD		! Radiation moda (0=nonradiative, 1-radiative(no stagling) 2-radiative with stagling(e1 target)
 	CLOSE(2)
 	
 	
-	OPEN(UNIT=93,FILE='seed.dat',FORM='FORMATTED')
+	OPEN(UNIT=93,FILE='seed.dat',STATUS='OLD',FORM='FORMATTED')
 	READ(93,*) IZ
 	CLOSE(93)
 	CALL RLUXGO(4,IZ,0,0)
@@ -263,6 +324,9 @@ c	READ(2,*) IZ			! RANDOM NUMBER
 c+ To ammeliorate see the gsim_bos.c routine
         CALL FPARM(
      >'OPEN UNIT=12 FILE='//FILEBOS//'  WRITE RECL=32760 '//
+     >'ACTION=WRITE STATUS=NEW FORM=BINARY')
+        CALL FPARM(
+     >'OPEN UNIT=13 FILE='//FILEBOS_acc//'  WRITE RECL=32760 '//
      >'ACTION=WRITE STATUS=NEW FORM=BINARY')
 
 C+ Making some conversions
@@ -318,8 +382,8 @@ c+ !!!! NTPLE 1  is wrong when channel from 25 are enabled
 
 c-
 c+ Calling another paw routine after known NVAR
-	CALL HBOOKN(1,' ',NVAR,'//ESCA',NPARZ,NCODE)
-	CALL HBOOKN(2,' ',69,'//ESCA',NPARZ,NCODE1)
+	CALL HBOOKN(1,' ',NVAR,'//ESCA',NPARZ,NCODE )
+	CALL HBOOKN(2,' ',73  ,'//ESCA',NPARZ,NCODE1)
 c-
 
 C	TETE E OMEGA SONO DETERMINATI DALLE RELAZIONI:
@@ -338,7 +402,7 @@ C+ Opening lund file
 	IF(LUND.NE.0) THEN
           OPEN (UNIT=2,FILE=FILELUND,STATUS='UNKNOWN',
      &          ACCESS='SEQUENTIAL',FORM='UNFORMATTED')
-C	OPEN(UNIT=2,NAME=FILELUND,TYPE='UNKNOWN',FORM='FORMATTED')
+C	OPEN(UNIT=2,NAME=FILELUND,STATUS='UNKNOWN',FORM='FORMATTED')
  	ENDIF
 c-
 c  Get full path to the input file
@@ -367,6 +431,13 @@ c	calculation the total cross sections of all channels
 c------------------------------------------------------------------------------
 c       calculation the max of the total cross section of all channels
 c------------------------------------------------------------------------------
+	do j=0,4
+	   proba(j)=0
+	enddo
+	
+	
+	
+	m_allchn=0.
         do j=1,251
          m_allchn = max(allchn(j),m_allchn)
         enddo
@@ -378,18 +449,18 @@ c------------------------------------------------------------------------------
 
 c	*************************************************************
 	call massvol2(wmin,tagliow,q2min,taglioq2,s_max(1),vol(1),
-     &	              m_allchn)
+     &	              m_allchn,modarad)
 	call massvol2(wmin,tagliow,taglioq2,q2max,s_max(2),vol(2),
-     &                m_allchn)
+     &                m_allchn,modarad)
 	call massvol2(tagliow,wmax,q2min,taglioq2,s_max(3),vol(3),
-     &                m_allchn)
+     &                m_allchn,modarad)
         call massvol2(tagliow,wmax,taglioq2,q2max,s_max(4),vol(4),
-     &                m_allchn)
+     &                m_allchn,modarad)
 c	*************************************************************	
 
 	 ELSE
-       	omegamax=f_o_max*Eo
-	omegamin= f_o_min*Eo
+       	omegamax=f_o_max*Eo_beam
+	omegamin= f_o_min*Eo_beam
 	cosmin=cos(tetmin*degrad)
 	cosmax=cos(tetmax*degrad)
 
@@ -423,9 +494,26 @@ c------------------------------------------------------------------------------
 	enddo
 ccccccccccccccccccccccccccccccccccccccc
 
+
+
 c+ Starting loop over event number
+
+	   acc_el=0.
+	   acc_pro=0.
+	   acc_pip=0.
+	   acc_pim=0.
+	   acc_had=0.
+        num_soft=0
+        num_hardini=0
+        num_hardfin=0
 	DO I=1,NSTORY
-99	N_TOT = N_TOT +1
+ 99     CONTINUE
+	N_TOT = N_TOT +1
+c        if( mod(N_TOT,1000).eq.1 .or. N_TOT.le.3) then
+c          print *,' NTOT,Istory==',N_TOT,I,num_soft,num_hardini,num_hardfin
+c        endif
+c        IF(N_TOT .gt. NSTORY) GOTO 9999
+        EO = EO_beam
 
 c++ Choosing between Q2,W or th_e,omega random extraction
 
@@ -463,26 +551,23 @@ c 	estrazione rettangolo
 	 smax=s_max(4)
 	 endif
 ccccccccccccccccccccccccccccccccccccccc
-c+++ Random Q2 and W estraction
+c++++ Random Q2 and W estraction and 
+c     Scattered electron variables settings
           Q2=rran()*(QqMIN-QqMAX)+QqMAX
           W=rran()*(WwMIN-WwMAX)+WwMAX
-c---
-c+++ Scattered electron variables
 	  OMEGA=(W**2+Q2-MP**2)/2./MP 
           EE=EO-OMEGA
 	  PE=EE
 	  ARG = (1-Q2/2./EE/EO)
-c++++ Regetting kinematics inconsistencies
-	  IF(ARG.LE.-1.OR.ARG.GE.1) GOTO 99
-	  if(omega.gt.Eo.or.omega.lt.0) goto 99
+	  IF(ARG.LE.-1.OR.ARG.GE.1)    GOTO 99!Regetting inconsistencies
+	  IF(OMEGA.GT.EO.OR.OMEGA.LT.0)GOTO 99!Regetting inconsistencies
+	  TETE = ACOS(ARG)    ! Theta of electron
+	  ARG  = (Q2+2*EO*OMEGA)/(2*EO*SQRT(Q2+OMEGA**2))
+	  IF(ARG.LE.-1.OR.ARG.GE.1)    GOTO 99!Regetting inconsistencies
+	  FE=FIEMIN+(FIEMAX-FIEMIN)*rran()  ! Phi of electron
+	  FE=FE*PIGR/180.
+	  IF (FIFLAG.EQ.0) FE=2*PIGR*rran() ! Conditioned uniform extraction in 0-360
 c----
-	  TETE = ACOS(ARG) ! Theta of electron
-	  ARG = (Q2+2*EO*OMEGA)/(2*EO*SQRT(Q2+OMEGA**2))
-c++++ Regetting kinematics inconsistencies
-	  IF(ARG.LE.-1.OR.ARG.GE.1) GOTO 99
-c----
-	  PSI=ACOS(ARG) ! Theta of virtual photon
-c---
 
 	 ELSE
 ccccccccccccccccccccccccccccccccccccccc
@@ -518,64 +603,152 @@ c 	estrazione rettangolo
 	 endif
 ccccccccccccccccccccccccccccccccccccccc
 
-c+++ Random theta_electron and omega estraction
+c+++ Random theta_electron and omega estraction and 
+c    Scattered electron variables settings
 	  TETE=ACOS(rran()*(COMIN-COMAX)+COMAX)
 	  OMEGA=rran()*(OMIN-OMAX)+OMAX
-c---
-c+++ Scattered electron variables
 	  EE=EO-OMEGA
 	  PE=SQRT(EE**2-ME**2)
 	  Q2=4*EO*(EO-OMEGA)*(SIN(TETE/2))**2 
-c++++ Regetting evts out Q2 cut (if activated)
-	   IF(I_Q2.EQ.1.and.(Q2.LT.Q2MIN.OR.Q2.GT.Q2MAX)) GOTO 99
-c----
-	  PSI=ACOS((Q2+2*EO*OMEGA)/(2*EO*SQRT(Q2+OMEGA**2))) ! Theta of virtual photo
+	  IF(I_Q2.EQ.1.and.(Q2.LT.Q2MIN.OR.Q2.GT.Q2MAX)) GOTO 99 !Reget
 	  ARG=(MP**2+2*MP*OMEGA-Q2) ! W2 of the reaction
-c++++ Regetting evts down 1-pion region
-	   IF (ARG.LT.1.1) GOTO 99
+	  IF (ARG.LT.1.1) GOTO 99 !Regetting evts down 1-pion region
+	  W=SQRT(ARG)
+	  IF(I_W.EQ.1.and.(W.LT.WMIN.OR.W.GT.WMAX)) GOTO 99 !Regetting evts out W cut (if activated) 
+	  FE=FIEMIN+(FIEMAX-FIEMIN)*rran()  ! Phi of electron
+	  FE=FE*PIGR/180.
+	  IF (FIFLAG.EQ.0) FE=2*PIGR*rran() ! Conditioned uniform extraction in 0-360
+
 c----
-	   W=SQRT(ARG)
-c++++ Regetting evts out W cut (if activated) 
-	   IF(I_W.EQ.1.and.(W.LT.WMIN.OR.W.GT.WMAX))  GOTO 99
-c----
-	  ENDIF
-c--
+	 ENDIF
+
 
 c+++ Evaluating kinematical factors and xsection according
 c+++ to the formula: d_sigma = GAMMA_V[SIGMA_T+EPS*SIGMA_L]
 c+++ where SIGMA_T=(DIPOLE FIT) AND SIGMA_L=0
+c+++   They will be recalculated after the cross-section calculation 
 	  EPS = (1+2*(1+OMEGA**2/Q2)*(TAN(TETE/2.))**2)**(-1)
 	  GAMMA_V = (1/137./2./PIGR**2)*(EE/EO)*((W**2-MP**2)/2./MP)/Q2
      @              /(1-EPS)
-ccccccccccccccccccccccccccccccccccccccccccccccc
+
+c+++ Starting calculation of full kinematics and
+c+++ dynamics for survived events
+
+c+++ CROSS-SECTION (e,e',gamma_virt)
+
+ccc         ModaRad=2 
+ccc         ! 0 -> nonradiative; 1-> radiative no stragling; 2 -> radiative
 	 IF(I_W.EQ.1.AND.I_Q2.EQ.1) THEN
- 	  d_sigma =f_allchn(w)* Gamma_V * (1+Q2/.7)**(-2)
-     &         /(2*Eo*(Eo-omega)*Mp)*w 
+ 	   d_sigma =f_allchn(w)* Gamma_V * (1+Q2/.7)**(-2)
+     &             /(2*Eo*(Eo-omega)*Mp)*w
+           IF(ModaRad.eq.0) THEN
+           d_sigma =sigma_ep_eet(Eo*1.d+0, EE*1.d+0, TETE*1.d+0)
+     &          /(2*Eo*(Eo-omega)*Mp)*w
+           e_radgam= 0.
+	   theta_radgam= 0.
+	   phi_radgam= 0.
+           ELSEIF(ModaRad.eq.1.or.ModaRad.eq.2) THEN
+           mf_min = 0.1395679d+0
+           if(ModaRad.eq.1) THEN
+           Ttarg  = 0.0 
+           Twi    = 0.0 
+           Twf    = 0.0 
+           else
+           Ttarg  = 0.00577d+0
+           Twi    = 0.00017d+0
+           Twf    = 0.00083d+0
+           endif
+           Ztarg  = 1.d+0
+           Zw     = 13.d+0
+           delta  = 0.010d+0
+c           mfin   = 0.93827231+0.1395679+0.1395679
+           mfin   = 0.93827231+0.1395679
+           CALL radiate1(sigma_ep_eet, d_sigma,d_sigma_part, mfin,
+     &          Eo,    Ee,    w,    q2,    omega,    tete,    fe,
+     &          Eo_vtx,Ee_vtx,w_vtx,q2_vtx,omega_vtx,tete_vtx,fe_vtx,
+     &          e_radgam, theta_radgam, phi_radgam,
+     &          mf_min, Ttarg,Twi,Twf,Ztarg,Zw, delta)
+           d_sigma      = d_sigma      /(2*Eo*(Eo-omega)*Mp)*w
+           d_sigma_part = d_sigma_part /(2*Eo*(Eo-omega)*Mp)*w
+            Eo_ini=Eo
+            Ee_ini=Ee
+            Pe=Ee
+            w_ini=w
+            q2_ini=q2
+            omega_ini=omega
+            tete_ini=tete
+            fe_ini=fe
+              Eo=Eo_vtx
+              Ee=Ee_vtx
+              Pe=Ee
+              w=w_vtx
+              q2=q2_vtx
+              omega=omega_vtx
+              tete=tete
+              fe=fe_vtx
+           ELSE
+            print *,' ModaRad is bad=',ModaRad 
+            stop
+           ENDIF
 	 ELSE
+          e_radgam= 0.
+	  theta_radgam= 0.
+	  phi_radgam= 0.
 	  d_sigma =f_allchn(w)* Gamma_V * (1+Q2/.7)**(-2)
+          d_sigma =sigma_ep_eet(Eo*1.d+0, EE*1.d+0, TETE*1.d+0)
 
 	 ENDIF
-ccccccccccccccccccccccccccccccccccccccccccccccc
 
+ccccccccccccccccccccccccccccccccccccccccccccccc
+          if(D_SIGMA.gt.Smax) then
+            print *,' D_SIGMA.gt.Smax==',D_SIGMA,Smax
+	    stop
+          endif
+          if(D_SIGMA.eq.0.) then
+            goto 99
+          endif
 	  D_S = D_SIGMA/Smax
 	  R_D_S=rran()
+
 c++++ Regetting evts out dsigma distribution
       IF (R_D_S.GT.D_S) GOTO 99
 c----
+      if    (abs(Eo-Eo_ini).le.0.001.and.abs(Ee-Ee_ini).le.0.001)then
+        num_soft=num_soft+1
+      elseif(abs(Eo-Eo_ini).gt.0.001.and.abs(Ee-Ee_ini).le.0.001)then
+        num_hardini=num_hardini+1
+      elseif(abs(Eo-Eo_ini).le.0.001.and.abs(Ee-Ee_ini).gt.0.001)then
+        num_hardfin=num_hardfin+1
+      endif
+
+
+c+++   Recalculated EPS,GAMMA_V 
+	  EPS = (1+2*(1+OMEGA**2/Q2)*(TAN(TETE/2.))**2)**(-1)
+	  GAMMA_V = (1/137./2./PIGR**2)*(EE/EO)*((W**2-MP**2)/2./MP)/Q2
+     @              /(1-EPS)
 c---
-c+++ Starting calculation of full kinematics and
-c+++ dynamics for survived events
-c++++ Azimuthal electron angle (FE)
-	FE=FIEMIN+(FIEMAX-FIEMIN)*rran()
-	FE=FE*3.1415/180.
-	IF (FIFLAG.EQ.0) FE=2*PIGR*rran() ! Conditioned uniform extraction in 0-360
-c----
-c++++ Azimuthal virtual photon angle (PHI)
-	 IF(FE.LT.PIGR) THEN
-	   PHI=FE+PIGR
-	 ELSE
-	   PHI=FE-PIGR
-	 ENDIF
+c+++ Angles of virtual photon angle (PHI)
+	  ARG = (Q2+2*EO*OMEGA)/(2*EO*SQRT(Q2+OMEGA**2))
+	  IF(ARG.LE.-1.OR.ARG.GE.1) GOTO 99
+	  PSI=ACOS(ARG) ! Theta of virtual photon
+          IF(FE.LT.PIGR) THEN
+	    PHI=FE+PIGR ! Phi of virtual photon
+          ELSE
+	    PHI=FE-PIGR
+          ENDIF
+c---
+c++++ Evaluating bETA in CM according to the formula:
+c     BET= q/(MP+OMEGA)  where Q^2=q^2-OMEGA^2
+	 BET=SQRT(Q2+OMEGA**2)/(MP+OMEGA)
+	 GAMMA=1./SQRT(1.-BET**2)
+         BETA(1)=0
+         BETA(2)=0
+         BETA(3)=BET
+         BETA(4)=GAMMA
+C++++ Changing BETA sign to move from CM to LAB frame 
+  	 DO M=1,3
+	  BETA(M)=-BETA(M)
+	 ENDDO
 c----
 c++++ Virtual photon COS in frame=CLAS
 	 UGV=SIN(PSI)*COS(PHI)
@@ -615,21 +788,6 @@ C++++	X' (X-AX. IN REF. 2): X'=VET(Y',Z')
 	UX = UX/XXMOD
 	VX = VX/XXMOD
 	WX = WX/XXMOD
-C----
-c++++ Evaluating bETA in CM according to the formula:
-C++++ BET= q/(MP+OMEGA)
-C++++ where Q^2=q^2-OMEGA^2
-	 BET=SQRT(Q2+OMEGA**2)/(MP+OMEGA)
-	 GAMMA=1./SQRT(1.-BET**2)
-         BETA(1)=0
-         BETA(2)=0
-         BETA(3)=BET
-         BETA(4)=GAMMA
-C+++++ Changing BETA sign to move from CM to LAB frame 
-  	 DO M=1,3
-	  BETA(M)=-BETA(M)
-	 ENDDO
-c-----
 c----
 c++++ Clearing DNUP vector
 	 DO J=1,NVAR
@@ -642,16 +800,21 @@ c++++ (PARTIC(J), J=1,NP) vector and
 c++++ JCH is the selected channel
 ccccccccccccccccccccccc
 
-C++ Extracting channel
 c+++ Choosing channel
-	 CALL CANALE(W,JCH,SIG) 
+	 CALL CANALE(W,JCH,SIG)
+c---
+
 c++++ Regetting dynamic inconsitency
         IF(JCH.EQ.0) GOTO 99
 c----
-c---
 
 ccccccccccccccccccccccc
 	CALL PCLE(JCH,TARGET,NP,PARTIC)
+        
+ccc        print *,' JCH,NP=',JCH,NP
+ccc        if(JCH.eq.15) print *,' --- 15 --- 111',NP
+        
+
 c----
 C++++ Fixing energy in CM (ECM=W)
         ECM=W
@@ -666,12 +829,13 @@ c++++ Fixing new absolute variable to count number of final state parts
 	NP_FINAL = NP
 c----
 c++++ Selecting procedure for 2 parts in final state
-        IF(NP.EQ.2) THEN
+        IF(NP_FINAL.EQ.2) THEN
 c+++++ Checking energy conservation for resonances
 c+++++ production (rho, omega, phi...) in 2-part final state
 
           IMPQ=((W**2+AMASS(1)**2-AMASS(2)**2)**2-4*W**2*   
      $         AMASS(1)**2)/(4*W**2)
+
 c++++++ Regetting events without energy conservation
           IF(IMPQ.LE.0) GOTO 99
 c------
@@ -682,7 +846,6 @@ c+++++ Special CM angular distribution for rho0  production (if enabled)
 	  IF(FLAG_DS_RHO.EQ.1) THP=ACOS(-2.*rran()+1.) ! Uniform
           IF(FLAG_DS_RHO.EQ.2) THP=rran()*PIGR	        ! Flat distribution
           IF(FLAG_DS_RHO.EQ.3) thp=30.*degrad           ! fixed cm angle
-           
 c-----
   	  ELSE 
 c+++++ Calling routine extracting angle according tabulated
@@ -695,8 +858,12 @@ c+++++ Ch 19-20 -> omega (same as rho)
 c+++++ Ch 25-26 -> phi   (same as rho)
 
            CALL ANG(JCH,W,THP)
+
+ccc           print *,' 2================',JCH
+
 c-----
 	  ENDIF
+
 c+++++ Inverting CM angle when a decaing particle is produced (THP=not decaing part)
 c+++++ From now TH_MESON = PIGR-THP
          IF((JCH.GE.11.AND.JCH.LE.14).OR.JCH.EQ.19.OR.JCH.EQ.20) THEN
@@ -714,8 +881,6 @@ c+++++ Ch 11-14  ->  PCM(*,1)=rho      PCM(*,2)=nucleon
 c+++++ Ch 19-20  ->  PCM(*,1)=omega    PCM(*,2)=nucleon
 c+++++ Ch 25-26  ->  PCM(*,1)=omega    PCM(*,2)=nucleon
           PHP = 2 * PIGR * rran()
-c          PHP = 71.*degrad ! test value
-c          thp=37.*degrad   ! test value 
 c++++++ Extracting correct phi distr for single pion channel
 	if (JCH.le.4) call ang_distr_1pi(eps,thp,php)
 c------	
@@ -756,7 +921,6 @@ c+ before to call genbod a test on energy is required
 	    E_test= E_test+ amass(jj)
 	   enddo
 	   if (ecm.lt.E_test) goto 99
-	   
 30	   if(np.eq.3) then
 	    call gen3n1bod
 	   else
@@ -805,6 +969,19 @@ c+++++ Ch 21-24  ->   PLAB1(*,1)=nucleon PLAB1(*,2)=pion PLAB1(*,3)=pion PLAB1(*
 c-----
 	 ENDDO
 c----
+
+c++++ Calcul of GPhi = angle between leptonic and hadronic planes
+
+	 Plab_Eout(1) = PE*UE1
+	 Plab_Eout(2) = PE*VE1
+	 Plab_Eout(3) = PE*WE1
+	 
+	 Plab_Pout(1) = PLAB1(1,2)
+	 Plab_Pout(2) = PLAB1(2,2)
+	 Plab_Pout(3) = PLAB1(3,2)
+	 
+	 call GPhiLH(EO_beam,Plab_Eout,Plab_Pout,res)
+	 gphi = res
 
 c++++ Staring routines ONLY for decaing particles
          FLAGD=0 ! Decay flag
@@ -930,9 +1107,9 @@ c++++++ phi NOTE: no decad routine is called
 	      PART_ID(4)=23
 	      np_final = 4
 	      np = 3
-	      amass(1) =  0.13957
-	      amass(2) =  0.13957
- 	      amass(3) =  0.13496
+	      amass(1) =  0.1395679
+	      amass(2) =  0.1395679
+ 	      amass(3) =  0.1349743
             endif
 	    ENDIF
 	    IF(JCH.EQ.26) THEN ! to be implemented
@@ -943,9 +1120,9 @@ c++++++ phi NOTE: no decad routine is called
 
 c------
 c-----
-c+++++ Rho0 decay using external file
+c+++++ Rho0 decay using angular distribution function
 	   IF(JCH.EQ.11) THEN
-	    CALL RHO_DECAY(ECM,FLAG_Decay_RHO)
+	    CALL RHO_DECAY(ECM,FLAG_Decay_RHO,Q2,W,GPhi,EPS)
 C++++++ Saving REST FRAME decaing vars
                DO IL=1,5
                  P_REST(IL) = PCM(IL,1)
@@ -1053,6 +1230,141 @@ c+++++++ Ch 11  ->   PLAB1(*,3)=pi+     PLAB1(*,4)=pi-
 c-------
 c------ Closing rho decay sub
 
+
+c------
+c-----
+c+++++ Omega decay using angular distribution function
+	  ELSE IF(JCH.EQ.19) THEN
+	    CALL OMEGA_DECAY(ECM,FLAG_Decay_RHO,Q2,W,GPhi,EPS)
+C++++++ Saving REST FRAME decaing vars
+               DO IL=1,5
+                 P_REST(IL) = PCM(IL,1)
+               ENDDO
+c++++++ Rotating XY from hadronic to leptonic plane (omega prod angles = -thp php)
+c+ Hadronic plane
+c       Px_spool =   COS(-php)*PCM(1,1) + SIN(-php)*PCM(2,1) !pion 1
+c       Py_spool =  -SIN(-php)*PCM(1,1) + COS(-php)*PCM(2,1)
+c       PCM(1,1) = Px_spool 
+c       PCM(2,1) = Py_spool 
+c       Px_spool =   COS(-php)*PCM(1,2) + SIN(-php)*PCM(2,2) !pion 2
+c       Py_spool =  -SIN(-php)*PCM(1,2) + COS(-php)*PCM(2,2)
+c       PCM(1,2) = Px_spool 
+c       PCM(2,2) = Py_spool 
+c       Px_spool =   COS(-php)*PCM(1,3) + SIN(-php)*PCM(2,3) !pion 3
+c       Py_spool =  -SIN(-php)*PCM(1,3) + COS(-php)*PCM(2,3)
+c       PCM(1,3) = Px_spool 
+c       PCM(2,3) = Py_spool 
+c       rho_CM_r(1) =   COS(-php)*rho_CM(1) + SIN(-php)*rho_CM(2) !rho
+c       rho_CM_r(2) =  -SIN(-php)*rho_CM(1) + COS(-php)*rho_CM(2)
+c       rho_CM_r(3) =   rho_CM(3)
+
+c+ hadronic cms z along rho
+
+c+ tmp change of thp (I remember that thp is the proton angle in cm for decaying particles)
+c+ boost along rho momentum
+	BETA_C = sqrt(rho_cm(4)**2-rho_cm(5)**2)/rho_cm(4)
+	GAMMA_C = 1/SQRT(1 - BETA_C**2)
+
+	ptr(4) =  GAMMA_C*(pcm(4,1) + BETA_C*pcm(3,1))   !pion 1
+        ptr(1) 	= pcm(1,1)
+        ptr(2)	= pcm(2,1)
+        ptr(3)  = GAMMA_C*(pcm(3,1) + BETA_C*pcm(4,1))
+	ptr(5) = sqrt(ptr(1)**2+ ptr(2)**2+ ptr(3)**2)
+	do  j= 1,5
+         pcm(j,1)=ptr(j)
+	enddo
+	ptr(4) =  GAMMA_C*(pcm(4,2) + BETA_C*pcm(3,2))   !pion 2
+        ptr(1) 	= pcm(1,2)
+        ptr(2)	= pcm(2,2)
+        ptr(3)  = GAMMA_C*(pcm(3,2) + BETA_C*pcm(4,2))
+	ptr(5) = sqrt(ptr(1)**2+ ptr(2)**2+ ptr(3)**2)
+	do  j= 1,5
+         pcm(j,2)=ptr(j)
+	enddo
+	ptr(4) =  GAMMA_C*(pcm(4,3) + BETA_C*pcm(3,3))   !pion 3
+        ptr(1) 	= pcm(1,3)
+        ptr(2)	= pcm(2,3)
+        ptr(3)  = GAMMA_C*(pcm(3,3) + BETA_C*pcm(4,3))
+	ptr(5) = sqrt(ptr(1)**2+ ptr(2)**2+ ptr(3)**2)
+	do  j= 1,5
+         pcm(j,3)=ptr(j)
+	enddo
+c+	Rotation to the hadronic CMS 
+c+	(z axis along q vector but x axis still on the hadronic plane)
+
+       thp = pigr-thp
+       Px_spool =   COS(-thp)*PCM(1,1) - SIN(-thp)*PCM(3,1) !pion 1
+       Py_spool =   SIN(-thp)*PCM(1,1) + COS(-thp)*PCM(3,1)
+       PCM(1,1) = Px_spool 
+       PCM(3,1) = Py_spool 
+       Px_spool =   COS(-thp)*PCM(1,2) - SIN(-thp)*PCM(3,2) !pion 2
+       Py_spool =   SIN(-thp)*PCM(1,2) + COS(-thp)*PCM(3,2)
+       PCM(1,2) = Px_spool 
+       PCM(3,2) = Py_spool
+       Px_spool =   COS(-thp)*PCM(1,3) - SIN(-thp)*PCM(3,3) !pion 3
+       Py_spool =   SIN(-thp)*PCM(1,3) + COS(-thp)*PCM(3,3)
+       PCM(1,3) = Px_spool 
+       PCM(3,3) = Py_spool
+ 
+c       rho_cm_r(1) =   COS(-thp)*rho_CM(1) - SIN(-thp)*rho_CM(3) !rho
+c       rho_CM_r(2) =   rho_CM(2)
+c       rho_cm_r(3) =   SIN(-thp)*rho_CM(1) + COS(-thp)*rho_CM(3)
+       thp=thp-pigr
+c+ Hadronic plane
+       Px_spool =   COS(-php)*PCM(1,1) + SIN(-php)*PCM(2,1) !pion 1
+       Py_spool =  -SIN(-php)*PCM(1,1) + COS(-php)*PCM(2,1)
+       PCM(1,1) = Px_spool 
+       PCM(2,1) = Py_spool 
+       Px_spool =   COS(-php)*PCM(1,2) + SIN(-php)*PCM(2,2) !pion 2
+       Py_spool =  -SIN(-php)*PCM(1,2) + COS(-php)*PCM(2,2)
+       PCM(1,2) = Px_spool 
+       PCM(2,2) = Py_spool 
+       Px_spool =   COS(-php)*PCM(1,3) + SIN(-php)*PCM(2,3) !pion 3
+       Py_spool =  -SIN(-php)*PCM(1,3) + COS(-php)*PCM(2,3)
+       PCM(1,3) = Px_spool 
+       PCM(2,3) = Py_spool 
+c       Px_spool =   COS(-php)*rho_CM_r(1) + SIN(-php)*rho_CM_r(2) !rho
+c       Py_spool =  -SIN(-php)*rho_CM_r(1) + COS(-php)*rho_CM_r(2)
+c       rho_cm_r(1) = Px_spool
+c       rho_CM_r(2) = Py_spool
+
+c++++++ Looping over THREE(!) pions
+            DO JK=1,3
+c               DO IL=1,4
+c                 P(IL) = PCM(IL,JK)
+c               ENDDO
+c             BETD(1)=-RHO_CM_r(1)/RHO_CM(4)
+c             BETD(2)=-RHO_CM_r(2)/RHO_CM(4)
+c             BETD(3)=-RHO_CM_r(3)/RHO_CM(4)
+c             BETM=SQRT(BETD(1)**2+BETD(2)**2+BETD(3)**2)
+c             BETD(4)=1./(SQRT(1.-BETM**2))
+c              CALL GLOREN(BETD,P,PA)
+              DO IL=1,4
+                P(IL)=PCM(IL,JK)
+              ENDDO
+	     CALL GLOREN(BETA,P,PA)
+              DO IL=1,4
+                PLAB2(IL,JK)=PA(IL)
+              ENDDO
+           PLAB2(5,JK)=SQRT(PROD_SCAL(PA,PA))
+
+	  PA1(1)=PA(1)*UX+PA(2)*UY+PA(3)*UGV
+	  PA1(2)=PA(1)*VX+PA(2)*VY+PA(3)*VGV
+	  PA1(3)=PA(1)*WX+PA(2)*WY+PA(3)*WGV
+	  PA(1)=PA1(1)
+	  PA(2)=PA1(2)
+	  PA(3)=PA1(3)
+c+++++++ Filling lab vector for two dauther pions and defining final configuration of PLAB1:
+c+++++++ Ch 19  ->   PLAB1(*,3)=pi+     PLAB1(*,4)=pi-     PLAB1(*,5)=pi0
+            DO IL=1,4
+             PLAB1(IL,JK+2)=PA(IL)
+           ENDDO
+           PLAB1(5,JK+2)=SQRT(PROD_SCAL(PA,PA))
+            ENDDO
+c-------
+c------ Closing omega decay sub
+
+
 	   ELSE
 c+++++ Calling GENBOD for all others decay 
 	   if(np.eq.3) then 
@@ -1094,8 +1406,28 @@ c------
 c----- Closing GENBOD loop
           ENDIF         
 c---- Closing routines for decayng particles
-C++++ Booking ntuple
-c+++++ General infos
+
+
+
+c+++++ RESTORE initial and final electrons variavles before
+c+++++ writing NTUPLEs and BOS
+c+++++ angles of the electrons were not changed
+          IF( ModaRad.eq.1.or.ModaRad.eq.2) THEN
+            Eo=Eo_ini
+            Ee=Ee_ini
+            Pe=Ee
+            w=w_ini
+            q2=q2_ini
+            omega=omega_ini
+            tete=tete_ini
+            fe=fe_ini
+          ENDIF
+c-----
+
+ccc          if(JCH.eq.15) print *,' --- 15 --- 444',NP
+ccc          print *,' NTUPLES'
+
+C++++ Booking ntuple  General infos
 	DNUP(NVAR-2)=JCH
 	DNUP(NVAR-3)=OMEGA
 	DNUP(NVAR-4)=Q2
@@ -1328,12 +1660,19 @@ c+                            pion in  rho   ch 11-14
 C+ ENUP(57-60) -> 1k
 c+ ENUP(61-64) -> 2k
 
+        E_TOTAL=0.
+        X_TOTAL=0.
+        Y_TOTAL=0.
+        Z_TOTAL=0.
 	DO J = 1,100
 	 ENUP(J) = -1000.
 	ENDDO
 	SECTOR = 0.
 C+ Electron variables
-
+         E_TOTAL=E_TOTAL+DNUP(4)
+         X_TOTAL=X_TOTAL+DNUP(1)
+         Y_TOTAL=Y_TOTAL+DNUP(2)
+         Z_TOTAL=Z_TOTAL+DNUP(3)
 	 ENUP(1) = DNUP(4)
 	 ENUP(2) = DNUP(5)
 	 ENUP(3) = DNUP(6)
@@ -1360,6 +1699,12 @@ c+ Loop over particles
 	 ELSE IF(PART_ID(J).EQ.-18.or.PART_ID(J).EQ.38) then
            J_P  = 60
 	 ENDIF
+          if(DNUP(J*7+4).gt.0.) then
+          E_TOTAL=E_TOTAL+DNUP(J*7+4)
+          X_TOTAL=X_TOTAL+DNUP(J*7+1)
+          Y_TOTAL=Y_TOTAL+DNUP(J*7+2)
+          Z_TOTAL=Z_TOTAL+DNUP(J*7+3)
+          endif
        	  ENUP(J_P+1) = DNUP(J*7+4)
        	  ENUP(J_P+2) = DNUP(J*7+5)
        	  ENUP(J_P+3) = DNUP(J*7+6)
@@ -1404,12 +1749,47 @@ c+ Checking at least one part with PHI in sector 2
 	ENUP(66) = OMEGA
 	ENUP(67) = JCH
 	ENUP(68) = DNUP(NVAR-1)
-	ENUP(69) = DNUP(NVAR)	
+	ENUP(69) = DNUP(NVAR)
+c+ Radiative Gamma variables
+        cc=acos(-1.0)/180.0
+        E_TOTAL=E_TOTAL+e_radgam
+        X_TOTAL=X_TOTAL+e_radgam*sin(theta_radgam*cc)*cos(phi_radgam*cc)
+        Y_TOTAL=Y_TOTAL+e_radgam*sin(theta_radgam*cc)*sin(phi_radgam*cc)
+        Z_TOTAL=Z_TOTAL+e_radgam*cos(theta_radgam*cc)
+	ENUP(70) = e_radgam
+	ENUP(71) = e_radgam
+	ENUP(72) = theta_radgam
+	ENUP(73) = phi_radgam
+
+c++++ Check energy conservation
+
+      
+c      print *,' E=',abs(EO_beam + MP - E_TOTAL)
+c      print *,' X=',abs(X_TOTAL) 
+c      print *,' Y=',abs(Y_TOTAL) 
+c      print *,' Z=',abs(EO_beam - Z_TOTAL) 
+      IF( abs(EO_beam + MP - E_TOTAL) .gt. 0.001 ) THEN
+        print *,' ENUP:EO_beam+MP,E_TOTAL=',EO_beam+MP,E_TOTAL,E_radgam
+        print *,' Skipped'
+        GOTO 99
+      ENDIF
 
 
 c+++++ Filling the ntuple
+
+c          if(JCH.eq.15) print *,' --- 15 --- 555',NP
+c          if(JCH.eq.15) print *,' --- 15 --- ENUP(67)',ENUP(67)
+c          do j=1,67
+c            print *,' NCODE1(j),ENUP(j)==',NCODE1(j),ENUP(j)
+c          enddo
+c          print *,' HFN'
+c          pause
+         
 	 CALL HFN(1,DNUP)
 	 CALL HFN(2,ENUP)
+         
+
+
 c-----
 c----
 c++++ Writing BOS file 
@@ -1417,11 +1797,12 @@ c+++++ Decomment next line to compile on INFNGE
 c	GOTO 912
 C+++++ 	Writing BOS header
         IHEAD = NBANK("HEAD",0,8,1)           ! BOS HEADER
-        IW(iHEAD+1)=2
+        IW(iHEAD+1)=1
         IW(iHEAD+2)=RUN
         IW(iHEAD+3)=I
+*        IW(iHEAD+4)=time()
         IW(iHEAD+4)=0
-        IW(iHEAD+5)=-1
+        IW(iHEAD+5)=-2
         IW(iHEAD+6)=0
         IW(iHEAD+7)=7
         IW(iHEAD+8)=1
@@ -1445,8 +1826,16 @@ C+++++ 	Writing	other MonteCarlo BOS banks
 	rw(iMCVX+4) = 0.
 	iw(iMCVX+5) = 0
 c-----
-c+++++ Writing electron variables	
+
+        IF( e_radgam.gt.0.010 ) THEN
+        IMCTK = NBANK('MCTK',0,11,NP_FINAL+1+1)
+        ELSE
         IMCTK = NBANK('MCTK',0,11,NP_FINAL+1)
+        ENDIF
+        E_TOTAL = 0. ! test the energy conservation
+
+c+++++ Writing electron variables
+           E_TOTAL = E_TOTAL+dnup(5)
            rw(imctk+1)=dnup(1)/dnup(5)
            rw(imctk+2)=dnup(2)/dnup(5)
            rw(imctk+3)=dnup(3)/dnup(5)
@@ -1457,20 +1846,22 @@ c+++++ Writing electron variables
            iw(imctk+8)=0
            iw(imctk+9)=1
            iw(imctk+10)=0
-           iw(imctk+11)=0
-	   if(spacode.gt.0) then
-	    CALL SETTORE(dnup(7),SE_EL)
-	    CALL PSEUDO_SPA(0,Dnup(5),dnup(6),(mod(dnup(7)+30.,60.)-30.),current,
-     c            1.05,SE_EL,ACC_EL)
-* rejecting events with no good electron *
-	    IF(acc_EL.EQ.0) GOTO 99 
-	   endif
+           iw(imctk+11)=JCH
+
+c ***********electron
+
+	   call ElectronFiducialCut(DNUP(5),DNUP(6),DNUP(7) ,acc_el)
+	   if(acc_el.eq.1.) iw(imctk+8)=1.
 	   
 c-----
 c+++++ Looping and writing final state particles variables           
+	   acc_pro=0.
+	   acc_pip=0.
+	   acc_pim=0.
 	DO J_J = 1,NP_FINAL
 	   K_K = J_J*7
 	   IMCTK = IMCTK + 11
+           E_TOTAL = E_TOTAL + DNUP(K_K+4)
            rw(imctk+1)=dnup(K_K+1)/dnup(K_K+5)
            rw(imctk+2)=dnup(K_K+2)/dnup(K_K+5)
            rw(imctk+3)=dnup(K_K+3)/dnup(K_K+5)
@@ -1481,61 +1872,86 @@ c+++++ Looping and writing final state particles variables
            iw(imctk+8)=0
            iw(imctk+9)=1
            iw(imctk+10)=0
-           iw(imctk+11)=0
-*DEFINING ACCEPTANCE FOR P P+ P-************
-	 if(spacode.gt.0) then
+           iw(imctk+11)=JCH
 
-	   IF (ID_BOS(PART_ID(J_J)).EQ.2212) THEN
-	   CALL SETTORE(dnup(K_K+7),SE_P)
-	   CALL PSEUDO_SPA(INT(CHARGE(PART_ID(J_J))),dnup(K_K+5),dnup(K_K+6),
-     c          (mod(dnup(K_K+7)+30.,60.)-30.),current,
-     c            1.05,SE_P,ACC_P)
-	   ENDIF
-	   IF (ID_BOS(PART_ID(J_J)).EQ.211) THEN
-	   CALL SETTORE(dnup(K_K+7),SE_PIP)
-	   CALL PSEUDO_SPA(INT(CHARGE(PART_ID(J_J))),dnup(K_K+5),dnup(K_K+6),
-     c          (mod(dnup(K_K+7)+30.,60.)-30.),current,
-     c            1.05,SE_PIP,ACC_PIP)
-	   ENDIF
-	   IF (ID_BOS(PART_ID(J_J)).EQ.-211) THEN
-	   CALL SETTORE(dnup(K_K+7),SE_PIM)
-	   CALL PSEUDO_SPA(INT(CHARGE(PART_ID(J_J))),dnup(K_K+5),dnup(K_K+6),
-     c          (mod(dnup(K_K+7)+30.,60.)-30.),current,
-     c            1.05,SE_PIM,ACC_PIM)
-	   ENDIF
-	   
-	 endif
+************DEFINING ACCEPTANCE FOR P P+ P-************
+
+
+*** parameter in the bos bank acc (iw(imctk+8)): 
+
+	   IF (ID_BOS(PART_ID(J_J)).EQ.2212) THEN      !proton
+	     call HadronFiducialCut(DNUP(K_K+5),DNUP(K_K+6),DNUP(K_K+7) ,acc_had)
+	     if(acc_had.eq.1.)then	 
+	       acc_pro=1.
+	       iw(imctk+8)=1.
+	    endif
+	  ENDIF
+	   IF (ID_BOS(PART_ID(J_J)).EQ.211) THEN    !   pi+
+	     call HadronFiducialCut(DNUP(K_K+5),DNUP(K_K+6),DNUP(K_K+7),acc_had)
+	     if(acc_had.eq.1.)then
+	       acc_pip=1.
+	       iw(imctk+8)=1.
+	    endif
+	  ENDIF
+
+	   IF (ID_BOS(PART_ID(J_J)).EQ.-211) THEN   !pi-
+	     call HadronFiducialCut(DNUP(K_K+5),DNUP(K_K+6),DNUP(K_K+7),acc_had)
+	     if(acc_had.eq.1.)then
+	       acc_pim=1.
+	       iw(imctk+8)=1.
+	    endif
+	  ENDIF
+
+
 
         ENDDO
+c+++++ Writing final state Radiation Gamma       
+        IF( e_radgam.gt.0.010 ) THEN
+	   IMCTK = IMCTK + 11
+           E_TOTAL = E_TOTAL+e_radgam
+           rw(imctk+1)=sin(theta_radgam)*cos(phi_radgam)
+           rw(imctk+2)=sin(theta_radgam)*sin(phi_radgam)
+           rw(imctk+3)=cos(theta_radgam)
+           rw(imctk+4)=e_radgam
+           rw(imctk+5)=0.0
+           rw(imctk+6)=0.0
+           iw(imctk+7)=22
+           iw(imctk+8)=0
+           iw(imctk+9)=1
+           iw(imctk+10)=0
+           iw(imctk+11)=0
+        ENDIF
+
+c++++ Check energy conservation
+      IF( abs(EO_beam + MP - E_TOTAL) .gt. 0.001 ) THEN
+        print *,' BOS:EO_beam+MP,E_TOTAL=',EO_beam+MP,E_TOTAL,E_radgam
+        print *,' Skipped'
+        GOTO 99
+      ENDIF
+
+c******Writing file_acc.bos (all particles and their acc values)
+c   *******  file used to calculate the geometrical acceptance table
+
+	CALL FWBOS(IW,IBID_acc,'E',iSTATUS1)
 c-----
-* ACCEPTING REACTIONS WITH AT LEAST 2 ACCEPTANCE >0. 
-	if(spacode.eq.1) then
-	 IF (ACC_P.GT.0..AND.ACC_PIP.GT.0..AND.ACC_PIM.EQ.0.) THEN
-	   GOTO 199
-	 ELSE
-	   GOTO 99
-	 ENDIF
-	elseif(spacode.eq.2) then
-	 IF (ACC_P.GT.0..AND.ACC_PIP.EQ.0..AND.ACC_PIM.GT.0.) THEN
-	   GOTO 199
-	 ELSE
-	   GOTO 99
-	 ENDIF
-	elseif(spacode.eq.3) then
-	 IF (ACC_P.EQ.0..AND.ACC_PIP.GT.0..AND.ACC_PIM.GT.0.) THEN
-	   GOTO 199
-	 ELSE
-	   GOTO 99
-	 ENDIF
-	elseif(spacode.eq.4) then
-	 IF (ACC_P.GT.0..AND.ACC_PIP.GT.0..AND.ACC_PIM.GT.0.) THEN
-	   GOTO 199
-	 ELSE
-	   GOTO 99
-	 ENDIF
+c-----
+* ACCEPTING REACTIONS 
+** aucune condition 
+	if(spacode.eq.0)goto 199
+
+**  condition demandee
+	if(spacode.eq.1)then
+**test des differentes particules
+c	   write(6,*)'acc',acc_el,acc_pro,acc_pip
+	   if(acc_el.eq.1. .and. acc_pro.eq.1. .and. acc_pip.eq.1.)then
+c	   if(acc_el.eq.1. .and. acc_pip.eq.1.)then
+	      goto 199
+	      else
+	     goto 99
+	   endif
 	endif
-
-
+***********
+c  *****   writing bos file for accepted events
 
 199	CALL FWBOS(IW,IBID,'E',iSTATUS1)
          CALL BDROP(IW,'E')
@@ -1547,6 +1963,7 @@ c++++ Creating LUND file
 	 IF(LUND.EQ.1) CALL LUND_WRITE(PCM,NP_FINAL)
 c---- Closing LUND if-loop
 	ENDDO
+ 9999   CONTINUE
 c-- Closing loop over number of events
 c++ Closing paw ntuple
  	CALL HROUT(1,ICYCLE,' ')
@@ -1570,7 +1987,7 @@ c	WRITE(*,*) 'Total estractions:',N_TOT
 	
 	
 	CALL RLUXUT(IZ)
-	OPEN(UNIT=91,FILE='seed.dat',FORM='FORMATTED')
+	OPEN(UNIT=91,FILE='seed.dat',STATUS='OLD',FORM='FORMATTED')
 	WRITE(91,*) IZ			! RANDOM NUMBER
 	CLOSE(91)
 	
@@ -1614,8 +2031,8 @@ C	*************************
 	IF(P.EQ.'POSITRON')   RMASS = 0.511E-03
 	IF(P.EQ.'MU+')        RMASS = 0.10566
 	IF(P.EQ.'MU-')        RMASS = 0.10566
-	IF(P.EQ.'PROTON')     RMASS = 0.93821
-	IF(P.EQ.'NEUTRON')    RMASS = 0.93951
+	IF(P.EQ.'PROTON')     RMASS = 0.93827231
+	IF(P.EQ.'NEUTRON')    RMASS = 0.93956563
 	IF(P.EQ.'LAMDA')      RMASS = 1.116
 	IF(P.EQ.'SIGMA+')     RMASS = 1.189
 	IF(P.EQ.'SIGMA0')     RMASS = 1.192
@@ -1651,9 +2068,9 @@ C	*************************
 4        CALL GAUSS(0.0042,0.783,RMASS)
 	 IF (RMASS.LT.0.415) GOTO 4  
 	ENDIF
-	IF(P.EQ.'PI+')        RMASS = 0.13957
-	IF(P.EQ.'PI0')        RMASS = 0.13496
-        IF(P.EQ.'PI-')        RMASS = 0.13957
+	IF(P.EQ.'PI+')        RMASS = 0.1395679
+	IF(P.EQ.'PI0')        RMASS = 0.1349743
+        IF(P.EQ.'PI-')        RMASS = 0.1395679
 	IF(P.EQ.'KAPPA+')     RMASS = 0.49367
 	IF(P.EQ.'KAPPA0')     RMASS = 0.49772
 	IF(P.EQ.'KAPPA-')     RMASS = 0.49367
@@ -1847,8 +2264,9 @@ C**************************************************************
 	RETURN
 
 	END
-	
 
+
+	
 
 C	*************************
 	SUBROUTINE PCLE(JCH,TARGET,NP,PARTIC)
@@ -2056,12 +2474,10 @@ C	*************************
         PARTIC(5) = 'PI-'
         PARTIC(6) = 'PI-'
         RETURN 
+        END
 
- 
 
-	END
-c+ Decomment this line to run on INFNGE
-C	OPTIONS/ EXTEND_SOURCE
+
 c-
 C	*************************
 	SUBROUTINE SEZTOT
@@ -2131,17 +2547,28 @@ CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
      &		   6.37,   6.29,   6.20,   6.16,   6.04,   5.95,   5.81,
      &		   5.70,   5.59,   5.53,   5.49,   5.40,   5.37,   5.32,
      &		   5.24,   5.20,   5.13,   5.07,   4.99,   4.93,   4.82,
-     &		   4.69,   4.32,   3.96,   3.60,   3.23,   2.86,   2.48,
-     &		   2.11,   1.74,   1.37,   1.00,   1.13,   1.26,   1.38,
-     &		   1.51,   1.64,   1.77,   1.90,   1.98,   2.07,   2.15,
-     &		   2.24,   2.32,   2.40,   2.49,   2.52,   2.55,   2.58,
-     &		   2.61,   2.64,   2.67,   2.70,   2.67,   2.64,   2.61,
-     &		   2.58,   2.55,   2.52,   2.49,   2.42,   2.36,   2.30,
-     &		   2.23,   2.17,   2.10,   2.04,   1.97,   1.91,   1.85,
-     &		   1.78,   1.72,   1.65,   1.59,   1.52,   1.46,   1.40,
-     &		   1.33,   1.27,   1.20,   1.14,   1.07,   1.01,   0.95,
-     &		   0.88,   0.82,   0.75,   0.69,   0.62,   0.56,   0.50,
-     &		   0.43,   0.37,   0.30,   0.24,   0.17,   0.11,   0.00,
+c     &		   4.69,   4.32,   3.96,   3.60,   3.23,   2.86,   2.48,
+c     &		   2.11,   1.74,   1.37,   1.00,   1.13,   1.26,   1.38,
+c     &		   1.51,   1.64,   1.77,   1.90,   1.98,   2.07,   2.15,
+c     &		   2.24,   2.32,   2.40,   2.49,   2.52,   2.55,   2.58,
+c     &		   2.61,   2.64,   2.67,   2.70,   2.67,   2.64,   2.61,
+c     &		   2.58,   2.55,   2.52,   2.49,   2.42,   2.36,   2.30,
+c     &		   2.23,   2.17,   2.10,   2.04,   1.97,   1.91,   1.85,
+c     &		   1.78,   1.72,   1.65,   1.59,   1.52,   1.46,   1.40,
+c     &		   1.33,   1.27,   1.20,   1.14,   1.07,   1.01,   0.95,
+c     &		   0.88,   0.82,   0.75,   0.69,   0.62,   0.56,   0.50,
+c     &		   0.43,   0.37,   0.30,   0.24,   0.17,   0.11,   0.00,
+     &		   4.73,   4.64,   4.55,   4.46,   4.36,   4.28,   4.20,
+     &		   4.13,   4.06,   3.99,   3.92,   3.86,   3.80,   3.74,
+     &		   3.68,   3.62,   3.56,   3.50,   3.44,   3.39,   3.34,
+     &		   3.29,   3.24,   3.19,   3.14,   3.09,   3.04,   3.00,
+     &		   2.96,   2.92,   2.88,   2.84,   2.80,   2.76,   2.72,     
+     &		   2.69,   2.66,   2.63,   2.60,   2.57,   2.54,   2.51,
+     &		   2.48,   2.45,   2.43,   2.41,   2.39,   2.37,   2.35,
+     &		   2.33,   2.31,   2.29,   2.27,   2.25,   2.23,   2.21,
+     &		   2.20,   2.19,   2.18,   2.17,   2.15,   2.14,   2.13,
+     &		   2.12,   2.11,   2.10,   2.09,   2.08,   2.07,   2.06,
+     &		   2.05,   2.04,   2.03,   2.02,   2.01,   2.00,   0.00,
      &		   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,
      &		   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,
      &		   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,
@@ -2822,6 +3249,7 @@ c*** riaggiusta la sezione d'urto della fi
 	 WR(J)=WR(J-1)+0.01
 	ENDDO
 
+
 	RETURN
 	END
 
@@ -2899,6 +3327,7 @@ C	CHOOSING THE CHANNEL....
         JCH = 0
         ENDIF
 
+
 	RETURN
 	END
 
@@ -2906,25 +3335,41 @@ C**************************************
         SUBROUTINE DECAD(JCH,NP,AMASS)
 C*************************************
 
-	IMPLICIT NONE
+	 IMPLICIT NONE
          INTEGER NP,JCH
          REAL AMASS(18)
 
-         IF(JCH.GE.5.AND.JCH.LE.10) THEN
+         IF(JCH.EQ.5)THEN
          NP=2
-         AMASS(1)=0.9388
-         AMASS(2)=0.137
+         AMASS(1)=0.93827231
+         AMASS(2)=0.1395679
          ENDIF
+         IF(JCH.EQ.6.OR.JCH.EQ.8)then
+         NP=2
+         AMASS(1)=0.93827231
+         AMASS(2)=0.1349743
+         ENDIF
+         IF(JCH.EQ.7.OR.JCH.EQ.9)then
+         NP=2
+         AMASS(1)=0.93827231
+         AMASS(2)=0.1395679
+         ENDIF
+         IF(JCH.EQ.10)then
+         NP=2
+         AMASS(1)=0.93956563
+         AMASS(2)=0.1395679
+         ENDIF
+
          IF(JCH.GE.11.AND.JCH.LE.14) THEN
          NP = 2
-         AMASS(1)=0.137
-         AMASS(2)=AMASS(1)
+         AMASS(1)=0.1395679
+         AMASS(2)=0.1395679
          ENDIF
          IF(JCH.GE.19.AND.JCH.LE.20) THEN
          NP = 3
-         AMASS(1)=0.1396
-         AMASS(2)=AMASS(1)
-         AMASS(3)=0.135
+         AMASS(1)=0.1395679
+         AMASS(2)=0.1395679
+         AMASS(3)=0.1349743
          ENDIF
          RETURN
          END
@@ -2974,6 +3419,7 @@ C	    XSECT(JCHI,II,J)=1.
          ENDDO
 20           THR=rran()*(0.-180.)+180.
 	     J=INT((THR/180.*19.))
+	     if(J.gt.18) J=18
             SR=rran()*SIMAX
 	    RJ=FLOAT(J)
             RJ1=(RJ+1.)                 
@@ -3009,12 +3455,12 @@ C--------------------------------------------------
 	COMMON/RHO/W_DEC_RHO
 c get full path to data file	
 	CALL revinm(genev_parms,'genev_rhodec.dat',filename)
-	OPEN(UNIT=62,FILE=filename,FORM='FORMATTED')
+	OPEN(UNIT=62,FILE=filename,STATUS='OLD',FORM='FORMATTED')
 	W_MAX = 0.
 	DO I=1,21
 	 DO J = 1,41
-	 TH = FLOAT(I-1)*3.14/20.
-	 PH = FLOAT(J-1)*6.28/40.
+	 TH = FLOAT(I-1)*3.141592653589793/20.
+	 PH = FLOAT(J-1)*3.141592653589793*2./40.
 C	 W_DEC_RHO(I,J) = SIN(PH)*SIN(TH)
 	 READ(62,*) THDUMMY,PHDUMMY,W_DEC(I,J)
 	 W_DEC_RHO(I,J) = W_DEC(I,J)*SIN(TH)
@@ -3031,67 +3477,425 @@ C	CLOSE(62)
 	END
 
 C*************************************************
-	SUBROUTINE RHO_DECAY(WRO,FLAG)
+	SUBROUTINE RHO_DECAY(WRO,FLAG,parm_Q2,parm_W,parm_GPhi,parm_EPS)
 C*************************************************
 
-
-
-
-
-
 	IMPLICIT NONE
-	REAL RRAN
-	REAL W_DEC_RHO(21,41),PCM(5,18),WGT,WRO,TH_PI1,
-     @         PH_PI1,WRD,MP,MPI
-	INTEGER N1,J,J1,ITH,IPH,FLAG
-	INTEGER*4 IZ
-	DATA MP,MPI/0.938,0.139/
-	DATA N1,J,J1/239,8971,12121/
-	COMMON/RANDOM/IZ		
-	COMMON/RHO/W_DEC_RHO
-	
+	REAL   parm_Q2,parm_W,parm_GPhi,parm_EPS,
+     @         rat, deno,
+     @         rho00_0,rho00_4, Rerho10_0,Rerho10_4, rho1m1_0,rho1m1_4,
+     @         rho11_1,rho00_1,Rerho10_1,rho1m1_1,Imrho10_2,Imrho1m1_2,
+     @         rho11_5,rho00_5,Rerho10_5,rho1m1_5,Imrho10_6,Imrho1m1_6, 
+     @         R00_04,ReR10_04,R1m1_04,
+     @         R11_1,R00_1,ReR10_1,R1m1_1,ImR10_2,ImR1m1_2,
+     @         R11_5,R00_5,ReR10_5,R1m1_5,ImR10_6,ImR1m1_6,
+     @         decay_distr_max,decay_distr,pirad,
+     @         thpi, phpi,
+     @         RRAN,PCM(5,18),WGT,WRO,WRD,MP,MPI
+	INTEGER FLAG,jthpi,jphpi 
+	DATA MP,MPI/0.93827200,0.1395702/				
 	COMMON/GENOUT/PCM,WGT 	
 	
+	pirad=3.14159
 
-		
-	PCM(5,1) = SQRT(0.25*WRO**2 - MPI**2)
 
-	PCM(5,2) = SQRT(0.25*WRO**2 - MPI**2)
-	
-10	TH_PI1 = 3.14*rran()
-	PH_PI1 = 6.28*rran()
+c define spin density matrix elements
+c	rat = 0.75*(parm_Q2)**(1.09)
+c	deno = 1 + parm_EPS*rat
 
-	WRD = rran()
+c++ Definition from rhoXY_Z = spin density matrix elements in photoproduction
+c	R00_04 =  (rho00_0 + parm_EPS*rat*rho00_4)  / deno
+c	ReR10_04 =  (Rerho10_0 + parm_EPS*rat*Rerho10_4)  / deno
+c	R1m1_04 = (rho1m1_0 + parm_EPS*rat*rho1m1_4)/ deno
 
-	ITH = INT(TH_PI1/0.157) + 1
-	IPH = INT(PH_PI1/0.157) + 1
+c	R11_1 = rho11_1 / deno
+c	R00_1 = rho00_1 / deno
+c	ReR10_1 = Rerho10_1 / deno
+c	R1m1_1 = rho1m1_1 / deno
+c	ImR10_2 = Imrho10_2 / deno
+c	ImR1m1_2 = Imrho1m1_2 / deno
 
+c       R11_5 = sqrt(rat)*rho11_5 / deno
+c	R00_5 = sqrt(rat)*rho00_5 / deno
+c	ReR10_5 = sqrt(rat)*Rerho10_5 / deno
+c	R1m1_5 = sqrt(rat)*rho1m1_5 / deno
+c	ImR10_6 = sqrt(rat)*Imrho10_6 / deno
+c	ImR1m1_6 = sqrt(rat)*Imrho1m1_6 / deno
+
+c++ Values from Joos et al, NP B113 (1976) for Q2 = 1.05 and W = 2-2.8
+	R00_04 =  0.47
+	ReR10_04 = 0.16
+        R1m1_04 = -0.06
+	R11_1 = -0.16
+	R00_1 = 0.26
+	ReR10_1 = 0.07
+	R1m1_1 = 0.0
+	ImR10_2 = -0.01
+	ImR1m1_2 = -0.17
+	R11_5 = 0.00
+	R00_5 = -0.04
+	ReR10_5 = -0.06
+	R1m1_5 = -0.04
+	ImR10_6 = -0.08
+	ImR1m1_6 = 0.09
+
+c find maximum of decay distribution (Nota : neglect epsilon and gphi dependence here !!!!)
+c cf equation 92 of Schilling and Wolf, NP B61 (1973)
+	decay_distr_max=-1.
+	do jthpi=0,30
+	   do jphpi=0,90
+	     thpi=jthpi*3.1416/30.
+	     phpi=jphpi*6.2832/90.
+	     decay_distr=3./4./pirad*(
+     @                         0.5 * (1-R00_04)
+     @                        +0.5 * (3*R00_04-1)*cos(thpi)**2
+     @                        -1.414 * ReR10_04 * sin(2*thpi) * cos(phpi)
+     @                        -R1m1_04 * sin(thpi)**2 * cos(2*phpi) ! end W^0
+     @                     -parm_EPS*cos(2*parm_GPhi)*(
+     @                         R11_1*sin(thpi)**2 
+     @                        +R00_1*cos(thpi)**2
+     @                        -1.414*ReR10_1*sin(2*thpi)*cos(phpi)
+     @                        -R1m1_1*sin(thpi)**2*cos(2*phpi))   ! end W^1
+     @                     -parm_EPS*sin(2*parm_GPhi)*(
+     @                         1.414*ImR10_2*sin(2*thpi)*sin(phpi)
+     @                        +ImR1m1_2*sin(thpi)**2*sin(2*phpi)) ! end W^2
+     @                     +sqrt(2*parm_EPS*(1+parm_EPS))*cos(parm_GPhi)*(
+     @                         R11_5*sin(thpi)**2
+     @                        +R00_5*cos(thpi)**2
+     @                        -1.414*ReR10_5*sin(2*thpi)*cos(phpi)
+     @                        -R1m1_5*sin(thpi)**2*cos(2*phpi))   ! end W^3  
+     @                     +sqrt(2*parm_EPS*(1+parm_EPS))*sin(parm_GPhi)*(
+     @                         1.414*ImR10_6*sin(2*thpi)*sin(phpi)
+     @                        +ImR1m1_6*sin(thpi)**2*sin(2*phpi))) ! end W^4
+     @              *sin(thpi)
+	     decay_distr_max=max(decay_distr_max,decay_distr)
+	  enddo
+	enddo
+	decay_distr_max=decay_distr_max*1.5 ! safe factor (to not have fine thpi phpi binning)
+
+c randum theta pion1 and phi pion1 in the rho rest frame  	
+10	THPI = pirad*rran()
+	PHPI = pirad*2.*rran()
+
+c evaluate decay distribution
+	decay_distr=3./4./pirad*(
+     @                         0.5 * (1-R00_04)
+     @                        +0.5 * (3*R00_04-1)*cos(thpi)**2
+     @                        -1.414 * ReR10_04 * sin(2*thpi) * cos(phpi)
+     @                        -R1m1_04 * sin(thpi)**2 * cos(2*phpi) ! end W^0
+     @                     -parm_EPS*cos(2*parm_GPhi)*(
+     @                         R11_1*sin(thpi)**2 
+     @                        +R00_1*cos(thpi)**2
+     @                        -1.414*ReR10_1*sin(2*thpi)*cos(phpi)
+     @                        -R1m1_1*sin(thpi)**2*cos(2*phpi))   ! end W^1
+     @                     -parm_EPS*sin(2*parm_GPhi)*(
+     @                         1.414*ImR10_2*sin(2*thpi)*sin(phpi)
+     @                        +ImR1m1_2*sin(thpi)**2*sin(2*phpi)) ! end W^2
+     @                     +sqrt(2*parm_EPS*(1+parm_EPS))*cos(parm_GPhi)*(
+     @                         R11_5*sin(thpi)**2
+     @                        +R00_5*cos(thpi)**2
+     @                        -1.414*ReR10_5*sin(2*thpi)*cos(phpi)
+     @                        -R1m1_5*sin(thpi)**2*cos(2*phpi))   ! end W^3  
+     @                     +sqrt(2*parm_EPS*(1+parm_EPS))*sin(parm_GPhi)*(
+     @                         1.414*ImR10_6*sin(2*thpi)*sin(phpi)
+     @                        +ImR1m1_6*sin(thpi)**2*sin(2*phpi))) ! end W^4
+     @              *sin(thpi)
+
+c if flag decay rho = 0 -> flat decay distrib
 	IF(FLAG.EQ.0) THEN
-	 W_DEC_RHO(ITH,IPH) = 1.
+	 decay_distr = decay_distr_max
 	ENDIF
 
-C------------------------------------------------------------------------------
-C	SELECTION OF THE EXTRACTED EVENT IN THE DECAYING PARTICLE REST FRAME
-C-----------------------------------------------------------------------------
-	 IF(ABS(WRD).LE.ABS(W_DEC_RHO(ITH,IPH))) THEN
-C--------------------------------------------------------
-C	VARIABLES IN THE RHO MESON REST FRAME
-C--------------------------------------
-	  PCM(1,1) = PCM(5,1)*SIN(TH_PI1)*COS(PH_PI1)
-	  PCM(2,1) = PCM(5,1)*SIN(TH_PI1)*SIN(PH_PI1)
-	  PCM(3,1) = PCM(5,1)*COS(TH_PI1)
-	  PCM(4,1) = SQRT(PCM(1,1)**2 + PCM(2,1)**2 + PCM(3,1)**2  + MPI**2)
-	  PCM(1,2) = - PCM(1,1)
-	  PCM(2,2) = - PCM(2,1)
-	  PCM(3,2) = - PCM(3,1)
-	  PCM(4,2) =   PCM(4,1)
-	ELSE 
-	 GOTO 10
-	ENDIF	
+c selection of the extracted event in the decaying particle rest frame
+	 WRD = rran()
+	 IF((WRD*decay_distr_max).GT.(decay_distr)) GOTO 10
+
+
+c	 open(unit=10,file='rho_dec.out',status='unknown')
+c	 write(10,*) thpi, cos(thpi), phpi, decay_distr
+
+
+c Pion1 and Pion2 variables in the rho rest frame
+  	 PCM(5,1) = SQRT(0.25*WRO**2 - MPI**2)
+	 PCM(5,2) = PCM(5,1)
+
+	 PCM(1,1) = PCM(5,1)*SIN(THPI)*COS(PHPI)
+	 PCM(2,1) = PCM(5,1)*SIN(THPI)*SIN(PHPI)
+	 PCM(3,1) = PCM(5,1)*COS(THPI)
+c	 PCM(4,1) = SQRT(PCM(1,1)**2 + PCM(2,1)**2 + PCM(3,1)**2  + MPI**2)
+	 PCM(4,1) = 0.5*WRO
+	 PCM(1,2) = - PCM(1,1)
+	 PCM(2,2) = - PCM(2,1)
+	 PCM(3,2) = - PCM(3,1)
+	 PCM(4,2) =   PCM(4,1)
 	
 	
 	RETURN
 	END
+
+
+
+C*********************************
+	subroutine omega_decay(WOM,FLAG,parm_Q2,parm_W,parm_GPhi,parm_EPS)
+C*********************************
+
+	implicit none
+	real   parm_Q2,parm_W,parm_GPhi,parm_EPS,
+     @         rat, deno,
+     @         rho00_0,rho00_4, Rerho10_0,Rerho10_4, rho1m1_0,rho1m1_4,
+     @         rho11_1,rho00_1,Rerho10_1,rho1m1_1,Imrho10_2,Imrho1m1_2,
+     @         rho11_5,rho00_5,Rerho10_5,rho1m1_5,Imrho10_6,Imrho1m1_6, 
+     @         R00_04,ReR10_04,R1m1_04,
+     @         R11_1,R00_1,ReR10_1,R1m1_1,ImR10_2,ImR1m1_2,
+     @         R11_5,R00_5,ReR10_5,R1m1_5,ImR10_6,ImR1m1_6,
+     @	       decay_distr_max,decay_distr,pirad,
+     @         thN, phN,
+     @         RRAN,PCM(5,18),WGT,WOM,WRD
+	real   mpip,mpi0,mpi,m3,Qav,mu,q2,p2,A2,
+     @         yx,p,q,Tz,Tm,Tp,y,x,th_dipi,phi_all,
+     @         p0a(3),ppa(3),pma(3),p0b(3),ppb(3),pmb(3),
+     @         p0c(3),ppc(3),pmc(3),p0int(3),ppint(3),pmint(3),
+     @         test(5)
+	integer flag,j,jthN,jphN
+	COMMON/GENOUT/PCM,WGT 
+
+	pirad=3.14159
+
+c Extracting perpendicular of (pi+ pi-) plane
+c++ Defining matrix element values (from ABBHHM and SLAC data) and deacy_distr where:
+c++ th = theta pi+.vector.pi- plane
+c++ ph = theta pi+.vector.pi- plane
+c++++++++++++++++++++++++++++++++++
+
+c define spin density matrix elements
+c	rat = 0.75*(parm_Q2)**(1.09)
+c	deno = 1 + parm_EPS*rat
+
+c++ Definition from rhoXY_Z = spin density matrix elements in photoproduction
+c	R00_04 =  (rho00_0 + parm_EPS*rat*rho00_4)  / deno
+c	ReR10_04 =  (Rerho10_0 + parm_EPS*rat*Rerho10_4)  / deno
+c	R1m1_04 = (rho1m1_0 + parm_EPS*rat*rho1m1_4)/ deno
+
+c	R11_1 = rho11_1 / deno
+c	R00_1 = rho00_1 / deno
+c	ReR10_1 = Rerho10_1 / deno
+c	R1m1_1 = rho1m1_1 / deno
+c	ImR10_2 = Imrho10_2 / deno
+c	ImR1m1_2 = Imrho1m1_2 / deno
+
+c       R11_5 = sqrt(rat)*rho11_5 / deno
+c	R00_5 = sqrt(rat)*rho00_5 / deno
+c	ReR10_5 = sqrt(rat)*Rerho10_5 / deno
+c	R1m1_5 = sqrt(rat)*rho1m1_5 / deno
+c	ImR10_6 = sqrt(rat)*Imrho10_6 / deno
+c	ImR1m1_6 = sqrt(rat)*Imrho1m1_6 / deno
+
+c++ Values from Joos et al, NP B113 (1976) for Q2 = 1.05 and W = 2-2.8
+	R00_04 =  0.47
+	ReR10_04 = 0.16
+        R1m1_04 = -0.06
+	R11_1 = -0.16
+	R00_1 = 0.26
+	ReR10_1 = 0.07
+	R1m1_1 = 0.0
+	ImR10_2 = -0.01
+	ImR1m1_2 = -0.17
+	R11_5 = 0.00
+	R00_5 = -0.04
+	ReR10_5 = -0.06
+	R1m1_5 = -0.04
+	ImR10_6 = -0.08
+	ImR1m1_6 = 0.09
+
+c find maximum of decay distribution (Nota : neglect epsilon and gphi dependence here !!!!)
+c cf equation 92 of Schilling and Wolf, NP B61 (1973)
+	decay_distr_max=-1.
+	do jthN=0,30
+	   do jphN=0,90
+	     thN=jthN*3.1416/30.
+	     phN=jphN*6.2832/90.
+	     decay_distr=3./4./pirad*(
+     @                         0.5 * (1-R00_04)
+     @                        +0.5 * (3*R00_04-1)*cos(thN)**2
+     @                        -1.414 * ReR10_04 * sin(2*thN) * cos(phN)
+     @                        -R1m1_04 * sin(thN)**2 * cos(2*phN) ! end W^0
+     @                     -parm_EPS*cos(2*parm_GPhi)*(
+     @                         R11_1*sin(thN)**2 
+     @                        +R00_1*cos(thN)**2
+     @                        -1.414*ReR10_1*sin(2*thN)*cos(phN)
+     @                        -R1m1_1*sin(thN)**2*cos(2*phN))   ! end W^1
+     @                     -parm_EPS*sin(2*parm_GPhi)*(
+     @                         1.414*ImR10_2*sin(2*thN)*sin(phN)
+     @                        +ImR1m1_2*sin(thN)**2*sin(2*phN)) ! end W^2
+     @                     +sqrt(2*parm_EPS*(1+parm_EPS))*cos(parm_GPhi)*(
+     @                         R11_5*sin(thN)**2
+     @                        +R00_5*cos(thN)**2
+     @                        -1.414*ReR10_5*sin(2*thN)*cos(phN)
+     @                        -R1m1_5*sin(thN)**2*cos(2*phN))   ! end W^3  
+     @                     +sqrt(2*parm_EPS*(1+parm_EPS))*sin(parm_GPhi)*(
+     @                         1.414*ImR10_6*sin(2*thN)*sin(phN)
+     @                        +ImR1m1_6*sin(thN)**2*sin(2*phN))) ! end W^4
+     @              *sin(thN)
+	     decay_distr_max=max(decay_distr_max,decay_distr)
+	   enddo
+	enddo
+	decay_distr_max=decay_distr_max*1.5 ! safe factor (to not have fine th ph binning)
+	
+c randum thetaN and phiN in the omega rest frame 
+ 765	thN = pirad*rran()
+	phN = 2.*pirad*rran()
+
+c evaluate decay distribution
+	decay_distr=3./4./pirad*(
+     @                         0.5 * (1-R00_04)
+     @                        +0.5 * (3*R00_04-1)*cos(thN)**2
+     @                        -1.414 * ReR10_04 * sin(2*thN) * cos(phN)
+     @                        -R1m1_04 * sin(thN)**2 * cos(2*phN) ! end W^0
+     @                     -parm_EPS*cos(2*parm_GPhi)*(
+     @                         R11_1*sin(thN)**2 
+     @                        +R00_1*cos(thN)**2
+     @                        -1.414*ReR10_1*sin(2*thN)*cos(phN)
+     @                        -R1m1_1*sin(thN)**2*cos(2*phN))   ! end W^1
+     @                     -parm_EPS*sin(2*parm_GPhi)*(
+     @                         1.414*ImR10_2*sin(2*thN)*sin(phN)
+     @                        +ImR1m1_2*sin(thN)**2*sin(2*phN)) ! end W^2
+     @                     +sqrt(2*parm_EPS*(1+parm_EPS))*cos(parm_GPhi)*(
+     @                         R11_5*sin(thN)**2
+     @                        +R00_5*cos(thN)**2
+     @                        -1.414*ReR10_5*sin(2*thN)*cos(phN)
+     @                        -R1m1_5*sin(thN)**2*cos(2*phN))   ! end W^3  
+     @                     +sqrt(2*parm_EPS*(1+parm_EPS))*sin(parm_GPhi)*(
+     @                         1.414*ImR10_6*sin(2*thN)*sin(phN)
+     @                        +ImR1m1_6*sin(thN)**2*sin(2*phN))) ! end W^4
+     @              *sin(thN)
+ 
+c if flag decay rho = 0 -> flat decay distrib
+	if(FLAG.eq.0) then
+	 decay_distr = decay_distr_max
+	endif
+
+c selection of the extracted event in the decaying particle rest frame
+	WRD = rran()
+	if((WRD*decay_distr_max).gt.(decay_distr)) goto 765
+
+
+c Calculating the decay matrix element and the momentum according to omega quantum number (1-)
+c++ In the omega rest frame, in the 3pi plane we have pion-dipion system
+c++ vec(q) = dipion CMS
+c++ vec(p) = remaining pion
+c++ mu=vec(q)vec(p)/q/p (angle between p/q)
+c++ therefore:
+c++   pi0    vec(p)
+c++   pi+   -vec(p)/2+vec(q)
+c++   pi-   -vec(p)/2-vec(q)
+c++ m3 = 3 pion mass system (M_omega) ad Q the available energy
+c++   pi0    vec(p)
+c++   pi+   -vec(p)/2+vec(q)
+c++   pi-   -vec(p)/2-vec(q)
+c++ A2 is the sqared matrix element assuming 
+c++ A = (vec(pi0)extvec(pi+)) + (vec(pi+)extvec(pi-)) + (vec(pi-)extvec(pi0))
+c++ compatible with JP=1- (omega quantum numbers) and minimal Lagrangian (l and L =1)
+c++ cf Stevenson et al, PR 125 (1962) 687 and 2008.
+c+++++++++++++++++++++++++++
+
+	mpip=0.13957
+	mpi0=0.13498
+	mpi = (2.*mpip + mpi0)/3.
+	m3 = WOM/mpi
+	Qav = (m3 - 3.)*mpi 
+
+c randum mu and q2 and extract p2 and A2
+ 976	mu = rran()*2.+(-1.)
+	q2 = rran()*((m3-1.)**2/4.-1.)
+	p2 = ((m3+1.)**2-4.*(q2+1))*((m3-1)**2-4.*(q2+1.))/4./m3**2
+	A2 = 9.*p2*q2*(1-mu**2)
+
+c selection of the extracted event according to A2
+	yx=rran()*50. ! Note : 50 was found numerically with WOM=MOM+10MeV to normalize the extraction
+	if (yx.gt.A2) goto 976
+
+	p=0
+	if(p2.gt.0) p=sqrt(p2)
+	q=0
+	if(q2.gt.0) q=sqrt(q2)
+
+c calculating kinetic energy for the 3 pions (Tz->pi0, Tm->pi+ Tp->pi-)
+c	Tz=(sqrt(p2+1.)-1.)*mpi
+c	Tm=(sqrt(p2/4+q2-p*q*mu+1.)-1.)*mpi
+c	Tp=(sqrt(p2/4+q2+p*q*mu+1.)-1.)*mpi
+
+c defining normalized variables
+c	y=Tz/Qav
+c	x=(Tm-Tp)/sqrt(3.)/Qav
+
+c defining thus deduced pions variables in the plane (label = a)
+	th_dipi=acos(mu)
+	p0a(1) = p*mpi
+	p0a(2) = 0.
+	p0a(3) = 0.
+	ppa(1) = (-p/2+q*cos(th_dipi))*mpi
+	ppa(2) = (q*sin(th_dipi))*mpi
+	ppa(3) = 0.
+	pma(1) = -p0a(1)-ppa(1)
+	pma(2) = -ppa(2)
+	pma(3) = 0.
+
+c randum phi_all = azimutal angle defining the x and y axis position on this plane
+c (indeed the 3-pions configuration can rotate by an overall phi angle in this plane)
+	phi_all=2*pirad*rran()
+
+c defining pions variables after rotation around phi_all (label = b)
+	call ROTATION(0.,phi_all,p0a,p0b)
+	call ROTATION(0.,phi_all,ppa,ppb)
+	call ROTATION(0.,phi_all,pma,pmb)
+
+c defining pions variables after rotation according to the decay matrix (label = c)
+c+++ 1) rotating the vectors lying on the plane by theta around X(in the hel frame X=x hcm) axis
+	call ROTATION(thN,0.,p0b,p0int)
+	call ROTATION(thN,0.,ppb,ppint)
+	call ROTATION(thN,0.,pmb,pmint)
+c+++ 2) rotating the vectors lying on the plane by phi around Z(in the hel frame Z=omega dir in hcm) axis
+	call ROTATION(0.,phN,p0int,p0c)
+	call ROTATION(0.,phN,ppint,ppc)
+	call ROTATION(0.,phN,pmint,pmc)
+
+
+c	open(unit=10,file='omeg_dec.out',status='unknown')
+c	write(10,*) thN, cos(thN), phN, decay_distr
+
+
+c filling output variables : Pion1, Pion2 and Pion3 variables in the omega rest frame
+	do j=1,3
+	   pcm(j,1)=ppc(j)
+	   pcm(j,2)=pmc(j)
+c	   pcm(j,3)=p0c(j)
+	   pcm(j,3)=-ppc(j)-pmc(j) ! to be sure that the energy is conserved, we get the pi0 as a funcion of pi+/pi-
+	enddo
+	pcm(4,1)=sqrt(ppc(1)**2+ppc(2)**2+ppc(3)**2+mpip**2)
+	pcm(5,1)=sqrt(ppc(1)**2+ppc(2)**2+ppc(3)**2)
+	pcm(4,2)=sqrt(pmc(1)**2+pmc(2)**2+pmc(3)**2+mpip**2)
+	pcm(5,2)=sqrt(pmc(1)**2+pmc(2)**2+pmc(3)**2)
+c	pcm(4,3)=sqrt(p0c(1)**2+p0c(2)**2+p0c(3)**2+mpi0**2)
+	pcm(4,3)=WOM-pcm(4,1)-pcm(4,2) ! to be sure that the energy is conserved, we get the pi0 as a funcion of pi+/pi-
+c	pcm(5,3)=sqrt(p0c(1)**2+p0c(2)**2+p0c(3)**2)
+	pcm(5,3)=sqrt(pcm(1,3)**2+pcm(2,3)**2+pcm(3,3)**2) ! to be sure that the energy is conserved, we get the pi0 as a funcion of pi+/pi-
+
+	do j=1,3
+	   test(j)=pcm(j,1)+pcm(j,2)+pcm(j,3)
+c       print *, test(j)
+	enddo 
+	test(4)=pcm(4,1)+pcm(4,2)+pcm(4,3)-WOM
+c       print *, test(4)
+	
+	
+	return
+	end
+
+
+
+
+
+
 
 C*********************************
 	SUBROUTINE GAUSS(S,AM,V)
@@ -3215,12 +4019,23 @@ c          SIGMA_T=(Dipole Fit) and SIGMA_L=0
 
 c	*********************************************************
         subroutine massvol2(wmin,wmax,q2min,q2max,fmax
-     &                       ,vol,m_allchn)	
+     &                       ,vol,m_allchn,modarad)	
 c       *********************************************************	
 	IMPLICIT NONE
         real mp2,Eo,Mp,me,pigr,degrad,raddeg,m_allchn,w2
 	real q2max,dw,dq2,costete,wmin,wmax,q2min,fmax,vol
-	real Ee,pe,Q2,d_sigma,W,eps,gamma_v,tete,omega
+	real Ee,pe,Q2,d_sigma,W,eps,gamma_v,tete,omega      
+	real mf_min,mfin,Ttarg,Twi,Twf,Ztarg,Zw, delta
+	real d_sigma_part,fe
+        real eo_vtx,ee_vtx,w_vtx,q2_vtx,omega_vtx,tete_vtx,fe_vtx
+        real eo_ini,ee_ini,w_ini,q2_ini,omega_ini,tete_ini,fe_ini
+	real e_radgam, theta_radgam, phi_radgam
+	integer modarad,k
+	real rcas
+        REAL*8   SIGMA_EP_EET
+        EXTERNAL SIGMA_EP_EET
+	REAL*8    sigma_rad
+
 c------------------------------------
 	common/costanti/Eo,Mp,me,pigr,degrad,raddeg
 c------------------------------------
@@ -3231,37 +4046,68 @@ c------------------------------------
 C       Set Delta_W (GeV) and Delta_q2 (GeV2)
         DW = (wmax-wmin)/100
         DQ2 = (q2max-q2min)/100
-
        DO w = WMIN, WMAX, DW
-         DO Q2 = Q2MIN, Q2MAX, DQ2
-
-          omega=(w**2+Q2-Mp**2)/2./Mp
-	  if(omega.ge.Eo.or.omega.lt.0)then
-	   d_sigma=0
-	  else
-	   costete=1-Q2/(2.*Eo*(Eo-omega))
-	   w2=w**2
-           if(costete.ge.1.or.costete.le.-1.
+	  DO Q2 = Q2MIN, Q2MAX, DQ2
+	     omega=(w**2+Q2-Mp**2)/2./Mp
+	     if(omega.ge.Eo.or.omega.lt.0)then
+		d_sigma=0
+	     else
+		costete=1-Q2/(2.*Eo*(Eo-omega))
+		w2=w**2
+		if(costete.ge.1.or.costete.le.-1.or.w2.lt.1.1) then
 c     &     or.w.lt.1.1) then
-     &     or.w2.lt.1.1) then
-           d_sigma=0
-	   else
-	    tete=acos(costete)
-	    Ee=Eo-omega
-            pe=sqrt(Ee**2-me**2)
-            eps = (1.+2.*(1+omega**2/Q2)*(TAN(TETe/2.))**2)**(-1)
-            Gamma_V = (1/137./2./pigr**2)*(Ee/Eo)*((W**2-MP**2)/2./MP)
-     &          /Q2/(1-EPS)
+		   d_sigma=0
+		else
+		   tete=acos(costete)
+		   Ee=Eo-omega
+		   pe=sqrt(Ee**2-me**2)
+		   eps = (1.+2.*(1+omega**2/Q2)*(TAN(TETe/2.))**2)**(-1)
+		   Gamma_V = (1/137./2./pigr**2)*(Ee/Eo)*((W**2-MP**2)/2./MP)
+     &                              /Q2/(1-EPS)
 c           Inserting in d_sigma=Gamma_V*[SIGMA_T+eps*SIGMA_L]
 c           SIGMA_T=(Dipole Fit) and SIGMA_L=0
-             d_sigma = Gamma_V * m_allchn * (1+Q2/.7)**(-2)  
-     &        /(2.*Eo*(Eo-omega)*Mp)*w
-	   endif
-	  endif
-	  fmax = max(d_sigma,fmax)
-
-	 enddo
+************************************************************************************
+		   d_sigma = Gamma_V * m_allchn * (1+Q2/.7)**(-2)  
+     1	                             /(2.*Eo*(Eo-omega)*Mp)*w   
+************************************************************************************
+c		   IF(ModaRad.eq.0) THEN
+c		      d_sigma = Gamma_V * m_allchn * (1+Q2/.7)**(-2)  
+c     1	                                 /(2.*Eo*(Eo-omega)*Mp)*w   
+c     		        
+c		   ELSEIF(ModaRad.eq.1.or.ModaRad.eq.2) THEN
+c		      mf_min = 0.1395679d+0
+c		      if(ModaRad.eq.1) THEN
+c			 Ttarg  = 0.0 
+c			 Twi    = 0.0 
+c			 Twf    = 0.0 
+c		      else
+c			 Ttarg  = 0.00426d+0
+c			 Twi    = 0.00087d+0
+c			 Twf    = 0.00105d+0
+c		      endif
+c		      Ztarg  = 1.d+0
+c		      Zw     = 29.d+0
+c		      delta  = 0.010d+0
+cc		      mfin   = 0.93827231+0.1395679+0.1395679
+c		      mfin   = 0.93827231+0.1395679
+c		      d_sigma =sigma_ep_eet(Eo*1.d+0, EE*1.d+0, TETE*1.d+0)
+c     &                         /(2*Eo*(Eo-omega)*Mp)*w
+c		      d_sigma =sigma_rad(sigma_ep_eet, eo*1.d+0,ee*1.d+0,tete*1.d+0,
+c     &                          mf_min*1.d+0, Ttarg*1.d+0,Twi*1.d+0,Twf*1.d+0,
+c     &                          Ztarg*1.d+0,Zw*1.d+0, delta*1.d+0)
+c		      d_sigma      = d_sigma      /(2*Eo*(Eo-omega)*Mp)*w
+c		   ELSE
+c		      print *,' ModaRad is bad=',ModaRad 
+c		      stop
+c		   ENDIF
+************************************************************************************
+		endif
+	     endif
+	     fmax = max(d_sigma,fmax)
+	  enddo
         enddo
+c safety factor for maximum corss section
+c	fmax=fmax*1.2    
 	vol=fmax*(wmax-wmin)*(q2max-q2min)
         return
         end
@@ -3289,17 +4135,17 @@ C++++++ Adding pions variables in CM
 C	               TYPE*, NP_N+3,DUMMY,DUMMY,EO,DUMMY,JCH*1.
               WRITE (2,ERR=100)
      +        0,17,
-     +        PCM_N(1,1),PCM_N(2,1),PCM_N(3,1),PCM_N(4,1),0.139
+     +        PCM_N(1,1),PCM_N(2,1),PCM_N(3,1),PCM_N(4,1),0.1395679
               WRITE (2,ERR=100)
      +        0,33,
      +        RHO_CM(1),RHO_CM(2),RHO_CM(3),RHO_CM(4),RHO_CM(5)
-C     +        PCM_N(1,2),PCM_N(2,2),PCM_N(3,2),PCM_N(4,2),0.139
+C     +        PCM_N(1,2),PCM_N(2,2),PCM_N(3,2),PCM_N(4,2),0.1395679
 C	TYPE*,
 C     +        0,17,
-C     +        PCM_N(1,1),PCM_N(2,1),PCM_N(3,1),PCM_N(4,1),0.139
+C     +        PCM_N(1,1),PCM_N(2,1),PCM_N(3,1),PCM_N(4,1),0.1395679
 C	TYPE*,
 C     +        0,-17,
-C     +        PCM_N(1,2),PCM_N(2,2),PCM_N(3,2),PCM_N(4,2),0.139
+C     +        PCM_N(1,2),PCM_N(2,2),PCM_N(3,2),PCM_N(4,2),0.1395679
 c------
 	   ENDIF
 c-----
@@ -3373,7 +4219,6 @@ C*********************************************
 
 	RETURN 
 	END
-
 
 
 
@@ -3461,8 +4306,6 @@ c
 c
       REAL acc                          ! Output parameter
 c
-      real theta_max_pip
-      parameter ( theta_max_pip = 125. )
       REAL t_max
       parameter (t_max = 3375.)
       REAL phi0_el, phi0_nh, phi0_ph
@@ -3496,7 +4339,7 @@ c- New, for very forward electrons -
       parameter (phi0_el_nip = 20.)
 c
       REAL pi,d2r,u_acc
-      parameter (pi = 3.1415926)
+      parameter (pi = 3.141592653589793)
       parameter (d2r = 0.0174533)
       parameter (u_acc = 0.20944)
       INTEGER err_count
@@ -3517,13 +4360,13 @@ c-
         if(theta.gt.theta_min.and.theta.lt.50.)then
           exp = cel_ex*(p*t_max/t_current)**pel_ex
           delta_phi = acp*phi0_el*sin((theta-theta_min)*d2r)**exp
-          if(abs(phi).lt.delta_phi)Acc=1
+          if(abs(phi).lt.delta_phi)Acc=sin(theta*d2r)*delta_phi*u_acc
 c- New, for very forward electrons -
         elseif(theta.gt.theta_min-theta_nip.and.theta.lt.50.)then
           exp = cel_ex_nip*(p*t_max/t_current)**pel_ex
           delta_phi = acp*phi0_el_nip
      *   *sin((theta-theta_min+theta_nip)*d2r)**exp
-          if(abs(phi).lt.delta_phi)Acc=1
+          if(abs(phi).lt.delta_phi)Acc=sin(theta*d2r)*delta_phi*u_acc
         endif
       ELSEIF(part_t.EQ.pos_hadron) THEN
         if(sect.eq.3)then
@@ -3545,17 +4388,17 @@ c- New, for very forward electrons -
      *    pnorm.lt.0.25+0.5*(theta/70.)**6)return
         endif
         theta_min = theta0_ph+thetas_ph*(1.-p*t_max/t_current/5.)**24
-        if(theta.gt.theta_min .and. theta.lt.theta_max_pip)then
+        if(theta.gt.theta_min)then
           exp=(p*t_max/t_current/5.)**(1./8.)
           delta_phi = acp*phi0_ph*cos((theta-theta_cut)*d2r)**exp
-          if(abs(phi).lt.delta_phi)Acc=1
+          if(abs(phi).lt.delta_phi)Acc=sin(theta*d2r)*delta_phi*u_acc
         endif
       ELSEIF(part_t.EQ.neg_hadron) THEN
         theta_min = theta0_nh+thetas_nh/(p*t_max/t_current+p_shift)
         if(theta.gt.theta_min.and.theta.lt.130.)then
           exp = ch_ex*(p*t_max/t_current)**pim_ex
           delta_phi = acp*phi0_nh*sin((theta-theta_min)*d2r)**exp
-          if(abs(phi).lt.delta_phi)Acc=1
+          if(abs(phi).lt.delta_phi)Acc=sin(theta*d2r)*delta_phi*u_acc
         endif
       ELSE
       	err_count=err_count+1
@@ -3564,6 +4407,137 @@ c- New, for very forward electrons -
       ENDIF
       RETURN 
       END
+
+
+C*******************************************
+	SUBROUTINE PSEUDO_SPA_MORE1(part_t,p,theta,phi,t_current,acp,sect,acc)
+C*******************************************
+c-      
+c-                     A WIDER version (no holes) of
+c-  Pseudo Single Particle acceptance function from Volker Burkert.
+c-
+c-  Inputs:
+c-          part_t    - INTEGER: 0=electron, 1=positive hadron, -1=negative hadron.
+c-          p         - REAL:    particle momentum GeV/c.
+c-          theta     - REAL:    particle polar angle in degrees (0 to 180.).
+c-          phi       - REAL:    particle azimuthal angle in degrees in the sector (-30. to 30.)
+c-          t_current - REAL:    torus current in A.
+c-	        acp       - REAL:    fraction of phi acceptance; acp = 1. gives the widest range.
+c-          sect      - INTEGER: sector number.    
+c-
+c-  Output:
+c-          acc       - REAL:    acceptance - equals 0. if particle is not in the fiducial region, 
+c-                               equals the solid angle weight if it is in the fiducial region.
+c
+      IMPLICIT NONE
+      REAL p,theta,phi,t_current,acp    ! Input parameter
+      INTEGER part_t,sect                 ! 
+c
+      REAL acc                          ! Output parameter
+c
+      REAL t_max
+      parameter (t_max = 3375.)
+      REAL phi0_el, phi0_nh, phi0_ph
+      parameter (phi0_el = 30.)
+      parameter (phi0_nh = 25.)
+      parameter (phi0_ph = 25.)    ! Changed for better discription.
+      REAL theta0_el, theta0_nh, theta0_ph
+      parameter (theta0_el = 15.5)
+      parameter (theta0_nh = 10.)
+      parameter (theta0_ph = 10.)
+      REAL thetas_el, thetas_nh, thetas_ph
+      parameter (thetas_el = 15.)
+      parameter (thetas_nh = 15.)
+      parameter (thetas_ph = 25.)
+      REAL p_shift, cel_ex, pel_ex, pim_ex
+      parameter (p_shift = 0.05)
+      parameter (pel_ex = 0.333)
+      parameter (pim_ex = 0.5)
+      parameter (cel_ex = 0.35)
+      REAL  ch_ex,theta_cut
+      parameter (theta_cut = 75.)
+      parameter (ch_ex = 0.1)
+      INTEGER electron,pos_hadron, neg_hadron
+      parameter (electron = 0)
+      parameter (pos_hadron = 1)
+      parameter (neg_hadron = -1)
+c- New, for very forward electrons -
+      REAL theta_nip,cel_ex_nip,phi0_el_nip
+      parameter (theta_nip = 2.)
+      parameter (cel_ex_nip = 0.5)
+      parameter (phi0_el_nip = 20.)
+c
+      REAL pi,d2r,u_acc
+      parameter (pi = 3.141592653589793)
+      parameter (d2r = 0.0174533)
+      parameter (u_acc = 0.20944)
+      INTEGER err_count
+      data err_count/0/
+      REAL theta_min, theta_max, delta_phi, exp, pnorm,dtheta
+      REAL delta_angles
+c-
+
+      delta_angles = 1.5
+      
+      Acc=0.0
+      pnorm=p*t_max/t_current
+      IF(part_t.EQ.electron) THEN
+        theta_min = theta0_el+thetas_el/(p*t_max/t_current+p_shift)
+        theta_min = theta_min - delta_angles
+        theta_max = 180. ! 50.
+        if(sect.eq.2)then
+          dtheta=6./pnorm
+          if(theta.gt.18.+dtheta+delta_angles.and.
+     &       theta.lt.20.+dtheta-delta_angles)return
+        elseif(sect.eq.5)then
+          dtheta=6./(p*t_max/t_current)
+          if(theta.gt.19.+dtheta+delta_angles.and.
+     &       theta.lt.21.5+dtheta-delta_angles)return
+        endif
+        if(theta.gt.theta_min.and.theta.lt.theta_max)then
+          exp = cel_ex*(p*t_max/t_current)**pel_ex
+          delta_phi = acp*phi0_el*sin((theta-theta_min)*d2r)**exp
+          delta_phi = delta_phi + delta_angles
+          if(abs(phi).lt.delta_phi)Acc=sin(theta*d2r)*delta_phi*u_acc
+c- New, for very forward electrons -
+        elseif(theta.gt.theta_min-theta_nip.and.theta.lt.theta_max)then
+          exp = cel_ex_nip*(p*t_max/t_current)**pel_ex
+          delta_phi = acp*phi0_el_nip
+     &   *sin((theta-theta_min+theta_nip)*d2r)**exp   
+          delta_phi = delta_phi + delta_angles
+          if(abs(phi).lt.delta_phi)Acc=sin(theta*d2r)*delta_phi*u_acc
+        endif
+      ELSEIF(part_t.EQ.pos_hadron) THEN
+        theta_min = theta0_ph+thetas_ph*(1.-p*t_max/t_current/5.)**24
+        theta_min = theta_min - delta_angles
+        theta_max = 180. ! 180.
+        if(theta.gt.theta_min.AND.theta.lt.90)then
+          exp=(p*t_max/t_current/5.)**(1./8.)
+          delta_phi = acp*phi0_ph*cos((theta-theta_cut)*d2r)**exp
+          delta_phi = delta_phi + delta_angles
+          if(abs(phi).lt.delta_phi)Acc=1
+        elseif(theta.gt.90)then
+	  Acc=1
+        endif
+      ELSEIF(part_t.EQ.neg_hadron) THEN
+        theta_min = theta0_nh+thetas_nh/(p*t_max/t_current+p_shift)
+        theta_min = theta_min - delta_angles
+        theta_max = 130. + delta_angles
+        if(theta.gt.theta_min.and.theta.lt.theta_max)then
+          exp = ch_ex*(p*t_max/t_current)**pim_ex
+          delta_phi = acp*phi0_nh*sin((theta-theta_min)*d2r)**exp
+          delta_phi = delta_phi + delta_angles
+          if(abs(phi).lt.delta_phi)Acc=sin(theta*d2r)*delta_phi*u_acc
+        endif
+      ELSE
+      	err_count=err_count+1
+      	if(err_count.le.10)WRITE(6,*)'Illegal particle type'
+      		ACC=0.0
+      ENDIF
+      RETURN 
+      END
+
+
 
 C***********************
 
@@ -3846,5 +4820,234 @@ c ----- check s12,s23 -----
       
 
 
+c----------------------------------------------------------------------
+c  CROSS-SECTION 
+c----------------------------------------------------------------------
+
+    
+      FUNCTION sigma_ep_eet(Es,Ep,Theta)
+      IMPLICIT none
+      REAL*8   SIGMA_EP_EET,Es,Ep,Theta
+      REAL*4   F_ALLCHN, W,omega,q2,eps,gamma_v, MP,PII
+
+      MP=0.93827231
+      PII = 3.141592653589793
+
+      omega = Es - Ep                                              
+      q2    = 4.*Es*Ep*(sin(theta/2.))**2         
+      w     = MP**2 + 2.*MP*omega - q2                    
+      if( w.le.0. ) then
+        sigma_ep_eet = 0.d+0
+        RETURN
+      endif
+      w     = sqrt(w)
+      EPS = (1.+2.*(1+omega**2/q2)*(tan(theta/2.))**2)**(-1)
+      GAMMA_V = (1/137./2./PII**2)*(Ep/Es)*((w**2-MP**2)/2./MP)/q2 
+     @          /(1-EPS)
+      SIGMA_EP_EET = f_allchn(w)* Gamma_V * (1+q2/.7)**(-2)     
+      RETURN
+      END
 
 
+c*********************************************************************************************
+c
+c   Calcul of GPhi = angle between leptonic and hadronic planes              
+c
+c*********************************************************************************************
+
+	Subroutine GPhiLH(Ebeam,QVlab_Eout,QVlab_Pout,res)
+	real*4 Ebeam,QVlab_Eout(3),QVlab_Pout(3)
+	real  res
+	real*4 kx,ky,kz, pxgv,pygv,pzgv,pgv, pxp,pyp,pzp,pp
+	real*4 costhp,thp,costhq,thq,sinthp,sinthq,prodvecx,prodvecy,prodvecz,prodsca
+	real*4 cosgphi,singphi
+
+**    incoming electron (k)
+	kx=0.
+	ky=0.
+	kz=Ebeam
+**    virtual photon (q)
+	pxgv= -QVlab_Eout(1)
+	pygv= -QVlab_Eout(2)
+	pzgv= Ebeam-QVlab_Eout(3)
+	pgv=sqrt(pxgv**2+pygv**2+pzgv**2)
+**    outgoing proton 
+	pxp = QVlab_Pout(1)
+	pyp = QVlab_Pout(2)
+	pzp = QVlab_Pout(3)
+	pp = sqrt(pxp**2+pyp**2+pzp**2)	
+
+** 
+	costhp=(pxgv*pxp + pygv*pyp + pzgv*pzp)/(pgv*pp)
+	thp=acos(costhp)
+	costhq=(pzgv)/(pgv)
+	thq=acos(costhq)
+	sinthp=sin(thp)
+	sinthq=sin(thq)
+
+**    calcul of sin(GPhi) [prod vect q^k]
+	prodvecx=pygv*kz-pzgv*ky 
+	prodvecy=-pxgv*Ebeam + pzgv*kx
+	prodvecz=pxgv*ky-pygv*kx
+	prodsca=prodvecx*pxp+prodvecy*pyp+prodvecz*pzp
+	singphi=-prodsca/(Ebeam*pgv*pp*sinthp*sinthq)
+*     calcul of cos(Gphi)
+	prodsca=Ebeam*pzp
+	cosgphi=(costhq*costhp-prodsca/(Ebeam*pp))/(sinthq*sinthp)
+
+	if(singphi.lt.-1.)singphi=-1.
+	if(singphi.gt.1.)singphi=1.
+	if(cosgphi.gt.1.)cosgphi=1.
+	if(cosgphi.lt.-1)cosgphi=-1.
+	
+	if(singphi.lt.0)then
+	  res=360.-acos(cosgphi)*180./acos(-1.)
+	else
+	  res=acos(cosgphi)*180./acos(-1.)
+	endif
+	
+	RETURN
+	END
+
+
+C*******************************************************************************
+	SUBROUTINE ROTATION
+     @  (thx,phx,v,vout)
+C*******************************************************************************
+	implicit none
+	REAL V(3),VPRIME(3),DROT(3,3)
+	REAL V1,V2,V3,VPRIME1,VPRIME2,VPRIME3
+	REAL THETA_E,PHI_E1
+	real vout(3),thx,phx
+	integer l,k
+
+C**************************************************************
+C	Evaluation of the components of the rotation matrix
+C**************************************************************
+
+	DROT(1,1) = COS(THX)*COS(PHX)
+	DROT(1,2) = -COS(THX)*SIN(PHX)
+	DROT(1,3) =   SIN(THX)
+
+	DROT(2,1) = SIN(PHX)
+	DROT(2,2) = COS(PHX)
+	DROT(2,3) = 0.
+
+	DROT(3,1) = -SIN(THX)*COS(PHX)
+	DROT(3,2) = -SIN(THX)*SIN(PHX)
+	DROT(3,3) = COS(THX)
+
+
+
+
+	DO L = 1,3
+	 DO K = 1,3
+	IF(ABS(DROT(L,K)-1.).LT.1.E-6) DROT(L,K) = 1.
+	IF(ABS(DROT(L,K)+1.).LT.1.E-6) DROT(L,K) = -1.
+	IF(ABS(DROT(L,K)).LT.1.E-4) DROT(L,K) = 0.
+	 ENDDO
+	ENDDO
+
+
+C**************************************************************
+C	Evaluation of the components of the rotated vector
+C**************************************************************
+
+	DO L = 1,3
+	VPRIME(L) = 0.
+	 DO K = 1,3
+	 VPRIME(L) = VPRIME(L) + V(K)*DROT(L,K)
+	 ENDDO
+	ENDDO
+
+C--------------------------------------------------------
+C	Fills the output values with the rotated vector
+C--------------------------------------------------------
+
+	do l=1,3
+	   vout(l)=VPRIME(l)
+	enddo
+
+	RETURN
+
+	END
+
+c*********************************************************************************************
+c
+c     Fiducial cuts for electrons (same function for data)         
+c
+c*********************************************************************************************
+
+	Subroutine ElectronFiducialCut(pmom,theta,phi,acc_el)
+	real*4 pmom,theta,phi
+	real  acc_el
+	real*4 C1,C2,C3,C4,factor,pshift,theta_cut,expon,dphi
+	integer sett
+c	C1 = 12.5
+	C1 = 10.
+	C2 = 18.55
+	C3 = 0.25
+c	C4 = 25.
+	C4 = 29.
+	factor = 0.416667
+	pshift = 0.14
+	theta_cut = 0.
+	expon = 0.
+	dphi = 0. 
+	acc_el=0.
+	p = pmom
+	call settore(phi,sett)
+	phic=phi-((sett-1)*60.)
+	if(sett.eq.1 .and. phi.ge.330)phic=phic-360.
+c ******* Fiducial cut theta vs. p
+	theta_cut = C1 + C2/(p+pshift)
+
+c******** Fiducial cut phi vs. p
+	expon = C3*p**factor
+	dphi = C4*(  ( sin((theta-theta_cut)*3.14159/180.) )) **expon     
+
+	if(abs(phic).le.dphi .and.  theta.ge.theta_cut)acc_el=1.
+
+	RETURN
+	END
+
+c*********************************************************************************************
+c
+c   Fiducial cuts for hadrons              
+c
+c*********************************************************************************************
+
+	Subroutine HadronFiducialCut(pmom,theta,phi,acc_had)
+	real*4 pmom,theta,phi,a0p(6),a0m(6),a1p(6),a1m(6),a2p(6),a2m(6),
+     +                   a3p(6),a3m(6)
+	real acc_had,phic,phi_min,phi_max 
+	integer s
+	phi_min=0.
+	phi_max=0.
+	phic=0.
+	acc_had=0.
+c	data a0p /24.,24.,23.,23.5,24.5,24.5/
+c	data a0m /25.,26.,26.,25.5,27.,26./
+c	data a1p /0.22,0.23,0.20,0.20,0.22,0.22/
+c	data a1m /0.22,0.22,0.22,0.22,0.16,0.16/
+c	data a2p /8.,8.,8.,8.,8.,8./
+c	data a2m /8.,8.,8.,8.,8.,8./
+	data a0p /25.8,25.5,24.7,24.7,26.4,26.4/
+	data a0m /26.,26.4,26.9,26.9,28.6,28.6/
+	data a1p /0.22,0.24,0.2,0.20,0.22,0.22/
+	data a1m /0.22,0.22,0.22,0.22,0.17,0.17/
+	data a2p /7.,7.,7.,7.,7.,7./
+	data a2m /7.,7.,7.,7.,7.,7./
+	data a3p /1.,1.,1.,1.,1.,1./
+	data a3m /1.,1.,1.,1.,1.,1./
+
+                call settore(phi,s)
+	phic=phi-((s-1)*60.)
+	if(s.eq.1 .and. phi.ge.330)phic=phic-360.
+c        Fiducial cut phi vs. theta
+	phi_min = -a0m(s)*(1-exp(-a1m(s)*(theta-a2m(s))))+a3m(s)
+	phi_max = a0p(s)*(1-exp(-a1p(s)*(theta-a2p(s))))+a3p(s)
+c	write(6,*)'phi',phi_min,phi_max,phic,s,theta
+	if(theta.ge.7. .and. phic.ge.phi_min  .and.  phic.le.phi_max)acc_had=1.
+	RETURN
+	END

@@ -1,30 +1,31 @@
-GENEV.BOS       ! BOS file name 
-100000          ! events number
-2.		! Ebeam (GeV)
-0.1		! omega_min/Eo 
-0.95		! omega_max/Eo
-12.5		! teta_min electron (degrees)
-55.		! teta_max electron (degrees)
+genev.bos        ! BOS file name 
+5000        ! events number
+11.		! Ebeam (GeV)
+0.5		! omega_min/Eo 
+0.55		! omega_max/Eo
+5.		! teta_min electron (degrees)
+45.		! teta_max electron (degrees)
 1		! flag to fix Q2 (1=read Qmin,Qmax; 0=ignore them)
-0.01     	! Q2min 	WARNING!! If Q2 and W flags are BOTH=1 extraction
-0.5		! Q2max		is made in Q2,W bin; elsewere in Omega,theta bin
+2.	     	! Q2min 	WARNING!! If Q2 and W flags are  BOTH=1extraction
+4.2		! Q2max		is made in Q2,W bin; elsewere in Omega,theta bin
 1		! flag to fix W (1=read Wmin,Wmax; 0=ignore them) 
-1.      	! Wmin (GeV)
-1.12             ! Wmax (GeV)
-1		! flag to fix phi of e- (1=read phi_min,phi_max; 0=ignore them)
-180		! phi_min (degrees)
-180.1		! phi_max (degrees)
-1		! number of activated channels channels
-1    	        ! channels ID (in one line, ID separeted by a coma e.g 1,3,4 ...)
+1.1     	! Wmin (GeV)
+3.5             ! Wmax (GeV)
+0		! flag to fix phi of e- (1=read phi_min,phi_max; 0=ignore them)
+0		! phi_min (degrees)
+90		! phi_max (degrees)
+15		! number of activated channels channels
+1,2,5,6,7,11,12,15,16,19,21,22,27,28,29   ! channels ID (in one line, ID separeted by a comae.g 1,3,4 ...)
 0		! 0/1 LUND file no/yes 
 genev.lund      ! lund file name
 0		! Flag Rho ds/dt (0=ds/dt true; 1=uniform 2=flat 3=fixed angle)
-0		! Flag decay Rho (0=flat 1=realistic)
--1500.           ! current of torus (real number)
+1		! Flag decay Rho (0=flat 1=realistic)
+3375.           ! current of torus (real number)
 0		! code for generation according to cuts (1=eppi+ inside cuts, etc., default 0)
-0.75		! Target radius (default 0)
-1.	        ! Target length (default 0)
-100.              ! Target offset in z (default 0)
+0.3		! Target radius (default 0)
+5.	        ! Target length (default 0)
+0.              ! Target offset in z (default 0)
+1	        ! Radiative Mode (1-radiative(no stagling) 2-radiative with stagling(e1 target)
 CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
 C 16 channels  on proton: 1,2,5,6,7,11,12,15,16,19,21,22,25,27,28,29
 C	          CHANNEL ID

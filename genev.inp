@@ -1,0 +1,62 @@
+GENEV.BOS       ! BOS file name 
+100000          ! events number
+2.		! Ebeam (GeV)
+0.1		! omega_min/Eo 
+0.95		! omega_max/Eo
+12.5		! teta_min electron (degrees)
+55.		! teta_max electron (degrees)
+1		! flag to fix Q2 (1=read Qmin,Qmax; 0=ignore them)
+0.01     	! Q2min 	WARNING!! If Q2 and W flags are BOTH=1 extraction
+0.5		! Q2max		is made in Q2,W bin; elsewere in Omega,theta bin
+1		! flag to fix W (1=read Wmin,Wmax; 0=ignore them) 
+1.      	! Wmin (GeV)
+1.12             ! Wmax (GeV)
+1		! flag to fix phi of e- (1=read phi_min,phi_max; 0=ignore them)
+180		! phi_min (degrees)
+180.1		! phi_max (degrees)
+1		! number of activated channels channels
+1    	        ! channels ID (in one line, ID separeted by a coma e.g 1,3,4 ...)
+0		! 0/1 LUND file no/yes 
+genev.lund      ! lund file name
+0		! Flag Rho ds/dt (0=ds/dt true; 1=uniform 2=flat 3=fixed angle)
+0		! Flag decay Rho (0=flat 1=realistic)
+-1500.           ! current of torus (real number)
+0		! code for generation according to cuts (1=eppi+ inside cuts, etc., default 0)
+0.75		! Target radius (default 0)
+1.	        ! Target length (default 0)
+100.              ! Target offset in z (default 0)
+CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+C 16 channels  on proton: 1,2,5,6,7,11,12,15,16,19,21,22,25,27,28,29
+C	          CHANNEL ID
+C
+C         1) V_Gamma  +  P  --->  N  +  PI+
+C         2) V_Gamma  +  P  --->  P  +  PI0
+C         3) V_Gamma  +  N  --->  P  +  PI-
+C         4) V_Gamma  +  N  --->  N  +  PI0
+C         5) V_Gamma  +  P  --->  DELTA++ +  PI-
+C         6) V_Gamma  +  P  --->  DELTA+  +  PI0
+C         7) V_Gamma  +  P  --->  DELTA0  +  PI+
+C         8) V_Gamma  +  N  --->  DELTA+  +  PI-
+C         9) V_Gamma  +  N  --->  DELTA0  +  PI0
+C        10) V_Gamma  +  N  --->  DELTA-  +  PI+
+C        11) V_Gamma  +  P  --->  RHO0  +  P
+C        12) V_Gamma  +  P  --->  RHO+  +  N
+C        13) V_Gamma  +  N  --->  RHO-  +  P
+C        14) V_Gamma  +  N  --->  RHO0  +  N
+C        15) V_Gamma  +  P  --->  P  +  PI   +  PI-  
+C        16) V_Gamma  +  P  --->  N  +  PI0  +  PI+   
+C        17) V_Gamma  +  N  --->  N  +  PI+  +  PI- 
+C        18) V_Gamma  +  N  --->  P  +  PI0  +  PI- 
+C        19) V_Gamma  +  P  --->  OMEGA  +  P
+C        20) V_Gamma  +  N  --->  OMEGA  +  N
+C        21) V_Gamma  +  P  --->  P  +  PI+  +  PI-  +  PI0  
+C        22) V_Gamma  +  P  --->  N  +  PI+  +  PI+  +  PI-
+C        23) V_Gamma  +  N  --->  N  +  PI+  +  PI-  +  PI0 
+C        24) V_Gamma  +  N  --->  P  +  PI+  +  PI-  +  PI-
+C        25) V_Gamma  +  P  --->  PHI  +  P
+C        26) V_Gamma  +  N  --->  PHI  +  N
+c        27) V_gamma  +  p  --->  pi+  +  pi+  +  pi-  +  pi-  +  p                   
+c        28) V_gamma  +  p  --->  pi+  +  pi+  +  pi-  +  pi-  +  pi0  +  p                
+c        29) V_gamma  +  p  --->  pi+  +  pi+  +  pi+  +  pi-  +  pi-  +  n                
+CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+
